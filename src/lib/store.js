@@ -22,6 +22,7 @@ import {
   AMBITOS,
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
+import { calcularFlujo, instanciarPasos } from "./flujo.js";
 import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
 import { tienePermiso, veContrato, PERMISOS, ROLES } from "./permisos.js";
 import { migrarV6aV7, fundirCatalogo, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia } from "./migracion.js";
@@ -686,6 +687,7 @@ export const deleteTramite = (id) => {
   borrarArchivosDeItems(data.items.filter((i) => i.tramite_id === id));
   data.tramites = data.tramites.filter((t) => t.id !== id);
   data.items = data.items.filter((i) => i.tramite_id !== id);
+  data.movimientos = (data.movimientos || []).filter((m) => m.tramiteId !== id);
   data.ampliaciones = (data.ampliaciones || []).filter((a) => a.tramite_id !== id);
   if (data.configFianzas) delete data.configFianzas[id];
   for (const usuario of data.usuarios || []) {
@@ -710,9 +712,17 @@ export const getItem = (id) => read().items.find((i) => i.id === id) || null;
 
 export const updateItem = (id, cambios) => {
   const data = read();
+  const actual = data.items.find((i) => i.id === id);
+  // En un hito con pasos el estado lo marcan los pasos: solo se puede dar por "No
+  // aplica" o reabrir (§5.9 regla 5).
+  if (actual?.pasos?.length && cambios && cambios.estado !== undefined && !["No aplica", "Pendiente"].includes(cambios.estado)) {
+    throw new Error("El estado de este hito lo determinan sus pasos. Registra el movimiento del paso.");
+  }
   data.items = data.items.map((i) => (i.id === id ? { ...i, ...cambios } : i));
+  const item = data.items.find((i) => i.id === id) || null;
+  if (item?.pasos?.length && cambios && (cambios.estado === "Pendiente" || cambios.pasos !== undefined)) sincronizarItemEn(data, item);
   write(data);
-  return data.items.find((i) => i.id === id) || null;
+  return item;
 };
 
 export const addItem = (tramiteId, nombre, etapaNombre = "Hitos propios", extra = {}) => {
@@ -765,6 +775,7 @@ export const removeItem = (id) => {
   if (!item) return;
   borrarArchivosDeItems([item]);
   data.items = data.items.filter((i) => i.id !== id);
+  data.movimientos = (data.movimientos || []).filter((m) => m.itemId !== id);
   anotarHistorial(data, {
     accion: "eliminar",
     objeto: "hito",
@@ -1453,3 +1464,166 @@ export const hoyISO = hoy;
 export const sumarDiasCalendario = sumarDias;
 export const etapasObra = ["Contrato y expediente", "Inicio y aseguramiento", "Ejecución de obra", "Recepción y liquidación"];
 export const etapasConsultoria = ["Contrato y expediente", "Inicio y equipo", "Ejecución del servicio", "Entregables y valorizaciones", "Recepción y liquidación"];
+
+
+// ---------- Seguimiento por pasos ----------
+// Un hito con pasos (`item.pasos`) se sigue con movimientos: hechos con fecha y
+// documento. El motor (flujo.js) calcula el paso actual, los plazos y el estado, y
+// aquí se guardan en el hito (`estado`, `fecha_limite`) para que el Panel y los
+// listados sigan funcionando igual.
+export const TIPOS_MOVIMIENTO = ["asiento", "presentado", "observado", "levantado", "conformidad", "pronunciamiento", "otro"];
+
+const flujoItemEn = (data, item) =>
+  (item?.pasos?.length
+    ? calcularFlujo(item, (data.movimientos || []).filter((m) => m.itemId === item.id), { feriados: data.feriados, hoy: hoy() })
+    : null);
+
+const itemEn = (data, itemId) => {
+  const item = data.items.find((i) => i.id === itemId);
+  if (!item) throw new Error("El hito no existe.");
+  return item;
+};
+
+// Escribe en el hito lo que dice el flujo. "No aplica" no se toca; un hito
+// completado conserva su última fecha límite.
+function sincronizarItemEn(data, item) {
+  const flujo = flujoItemEn(data, item);
+  if (!flujo || item.estado === "No aplica") return flujo;
+  item.estado = flujo.estado;
+  if (flujo.estado === "Completado") {
+    if (!item.fecha) {
+      const fechas = flujo.pasos.filter((p) => p.movimiento).map((p) => p.movimiento.fecha).sort();
+      item.fecha = fechas[fechas.length - 1] || hoy();
+    }
+  } else {
+    item.fecha_limite = flujo.fechaLimite;
+  }
+  return flujo;
+}
+
+// Crea el movimiento dentro de una escritura que ya está abierta: lo usan
+// registrarMovimiento, registrarSilencio y la mesa de partes.
+export const crearMovimientoEn = (data, item, datos) => {
+  exigirEn(data, "registrar", item.tramite_id);
+  if (!item.pasos?.length) throw new Error("Este hito no tiene seguimiento por pasos.");
+  if (!item.pasos.some((p) => p.clave === datos.pasoClave)) throw new Error("El paso no existe en este hito.");
+  if (!TIPOS_MOVIMIENTO.includes(datos.tipo)) throw new Error("El tipo de movimiento no es válido.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(datos.fecha || ""))) throw new Error("Indica la fecha del movimiento.");
+  const usuario = usuarioActual(data);
+  if (!Array.isArray(data.movimientos)) data.movimientos = [];
+  const observaciones = data.movimientos.filter((m) => m.itemId === item.id && !m.anulado && m.tipo === "observado").length;
+  const movimiento = {
+    id: uid(),
+    tramiteId: item.tramite_id,
+    itemId: item.id,
+    pasoClave: datos.pasoClave,
+    ciclo: observaciones + (datos.tipo === "observado" ? 1 : 0),
+    tipo: datos.tipo,
+    fecha: datos.fecha,
+    hora: datos.hora || "",
+    numeroDocumento: String(datos.numeroDocumento || "").trim(),
+    asientoCO: String(datos.asientoCO || "").trim(),
+    cargoId: datos.cargoId || null,
+    archivoId: datos.archivoId || null,
+    nota: String(datos.nota || "").trim(),
+    usuario: usuario?.nombre || "Sistema",
+    usuarioId: usuario?.id || null,
+    registrado: new Date().toISOString(),
+  };
+  data.movimientos.push(movimiento);
+  sincronizarItemEn(data, item);
+  return movimiento;
+};
+
+export const registrarMovimiento = (itemId, datos = {}) => {
+  const data = read();
+  const movimiento = crearMovimientoEn(data, itemEn(data, itemId), datos);
+  write(data);
+  return clonar(movimiento);
+};
+
+export const anularMovimiento = (id, motivo) => {
+  const data = read();
+  const movimiento = (data.movimientos || []).find((m) => m.id === id);
+  if (!movimiento) throw new Error("El movimiento no existe.");
+  exigirEn(data, "corregir", movimiento.tramiteId);
+  if (movimiento.anulado) throw new Error("El movimiento ya está anulado.");
+  const razon = String(motivo || "").trim();
+  if (!razon) throw new Error("Indica el motivo de la anulación.");
+  const usuario = usuarioActual(data);
+  movimiento.anulado = true;
+  movimiento.anuladoPor = usuario?.nombre || "Sistema";
+  movimiento.motivoAnulacion = razon;
+  const item = data.items.find((i) => i.id === movimiento.itemId);
+  if (item) sincronizarItemEn(data, item);
+  anotarHistorial(data, {
+    accion: "anular",
+    objeto: "movimiento",
+    objetoId: id,
+    tramiteId: movimiento.tramiteId,
+    detalle: `${item ? `${item.codigo} — ${item.nombre}` : "Hito"}: se anuló «${movimiento.tipo}» del ${movimiento.fecha}. Motivo: ${razon}`,
+  });
+  write(data);
+  return clonar(movimiento);
+};
+
+export const listarMovimientos = (itemId) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === itemId);
+  if (!item || !veContrato(data.permisosRoles, usuarioActual(data), item.tramite_id)) return [];
+  return clonar((data.movimientos || [])
+    .filter((m) => m.itemId === itemId)
+    .sort((a, b) => String(a.fecha).localeCompare(String(b.fecha)) || String(a.registrado).localeCompare(String(b.registrado))));
+};
+
+export const flujoDeItem = (itemId) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === itemId);
+  if (!item || !veContrato(data.permisosRoles, usuarioActual(data), item.tramite_id)) return null;
+  const flujo = flujoItemEn(data, item);
+  return flujo ? clonar(flujo) : null;
+};
+
+// Copia a un hito existente los pasos que su plantilla tiene hoy en el catálogo.
+export const activarPasos = (itemId) => {
+  const data = read();
+  const item = itemEn(data, itemId);
+  exigirEn(data, "estado", item.tramite_id);
+  if (item.pasos?.length) throw new Error("Este hito ya tiene seguimiento por pasos.");
+  if (item.estado === "Completado") throw new Error("Un hito completado no puede pasar a seguimiento por pasos.");
+  const tramite = data.tramites.find((t) => t.id === item.tramite_id);
+  const ruta = item.tipo === "eventual" ? `eventual:${item.clave}` : item.tipo === "opcional" ? item.plantilla : item.clavePlantilla;
+  const ubicada = ubicarPlantillas(data.catalogo, ruta).find((u) => u.ambito === ambitoDe(tramite?.tipo_objeto));
+  if (!ubicada || !(ubicada.plantilla.pasos || []).length) throw new Error("Este hito no tiene pasos definidos en el catálogo.");
+  item.pasos = instanciarPasos(ubicada.plantilla.pasos, item.tipo === "eventual" ? "" : item.fecha_limite);
+  item.plazoLevantamiento = ubicada.plantilla.plazoLevantamiento || null;
+  sincronizarItemEn(data, item);
+  anotarHistorial(data, {
+    accion: "editar",
+    objeto: "hito",
+    objetoId: item.id,
+    tramiteId: item.tramite_id,
+    detalle: `Seguimiento por pasos activado en ${item.codigo} — ${item.nombre}.`,
+  });
+  write(data);
+  return clonar(item);
+};
+
+// La entidad no se pronunció a tiempo y el usuario confirma el silencio positivo.
+// Nada se aprueba solo: esta acción la ejecuta una persona (§5.9 regla 8).
+export const registrarSilencio = (itemId) => {
+  const data = read();
+  const item = itemEn(data, itemId);
+  exigirEn(data, "registrar", item.tramite_id);
+  const flujo = flujoItemEn(data, item);
+  if (!flujo?.silencioVencido) throw new Error("El plazo de la entidad todavía no vence.");
+  const paso = flujo.pasos[flujo.actual];
+  const movimiento = crearMovimientoEn(data, item, {
+    pasoClave: paso.clave,
+    tipo: "pronunciamiento",
+    fecha: sumarDias(paso.fechaLimite, 1),
+    nota: "Aprobado por silencio positivo",
+  });
+  write(data);
+  return clonar(movimiento);
+};

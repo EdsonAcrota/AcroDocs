@@ -1606,3 +1606,58 @@ describe("catálogo almacenado", () => {
     expect(() => store.guardarCatalogo(cat, "x")).toThrow("El catálogo tiene hitos duplicados.");
   });
 });
+
+describe("seguimiento por pasos", () => {
+  const ampliacion = () => {
+    entrar("gerente");
+    const t = store.createTramite({
+      codigo: "OC-FLUJO", denominacion: "Obra", tipo_objeto: "Obra",
+      fecha_inicio: "2026-03-02", fecha_fin: "2026-08-31", fecha_suscripcion: "2026-02-20",
+    });
+    return store.addTareaEventual(t.id, "ampliacion");
+  };
+
+  it("el fin de causal fija la fecha límite en la de la solicitud; anularlo la recalcula y queda en el historial", () => {
+    const item = ampliacion();
+    expect(item.pasos).toHaveLength(5);
+    const m = store.registrarMovimiento(item.id, { pasoClave: "fin_causal", tipo: "asiento", fecha: "2026-11-10" });
+    expect(store.getItem(item.id).fecha_limite).toBe("2026-11-24");
+    store.anularMovimiento(m.id, "Fecha mal anotada");
+    expect(store.getItem(item.id).fecha_limite).toBe("");
+    expect(store.listarHistorial({ objeto: "movimiento" }).some((h) => h.accion === "anular")).toBe(true);
+  });
+
+  it("el silencio positivo lo confirma una persona: falla antes del vencimiento y completa el hito al día siguiente", () => {
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-09-20T12:00:00"));
+      const item = ampliacion();
+      store.updateItem(item.id, {
+        pasos: item.pasos.map((p) => (p.clave === "pronunciamiento_entidad" ? { ...p, plazoDias: 10 } : p)),
+      });
+      store.registrarMovimiento(item.id, { pasoClave: "fin_causal", tipo: "asiento", fecha: "2026-09-01" });
+      store.registrarMovimiento(item.id, { pasoClave: "solicitud", tipo: "presentado", fecha: "2026-09-10" });
+      store.registrarMovimiento(item.id, { pasoClave: "informe_supervision", tipo: "conformidad", fecha: "2026-09-15" });
+      expect(() => store.registrarSilencio(item.id)).toThrow("El plazo de la entidad todavía no vence.");
+
+      vi.setSystemTime(new Date("2026-11-17T12:00:00"));
+      const m = store.registrarSilencio(item.id);
+      expect(m.fecha).toBe("2026-09-30");
+      expect(m.nota).toBe("Aprobado por silencio positivo");
+      expect(store.getItem(item.id).estado).toBe("Completado");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("el estado de un hito con pasos no se cambia a mano, y activarPasos copia los de la plantilla a un hito sin ellos", () => {
+    const item = ampliacion();
+    expect(() => store.updateItem(item.id, { estado: "Completado" })).toThrow("lo determinan sus pasos");
+
+    const valorizacion = store.listItems("t-001").find((i) => i.clavePlantilla === "1.3.2" && i.estado !== "Completado");
+    store.updateItem(valorizacion.id, { pasos: [] });
+    expect(store.flujoDeItem(valorizacion.id)).toBeNull();
+    expect(store.activarPasos(valorizacion.id).pasos).toHaveLength(3);
+    expect(store.flujoDeItem(valorizacion.id).actual).toBe(0);
+  });
+});
