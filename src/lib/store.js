@@ -13,7 +13,7 @@ import {
 import { eliminarArchivo } from "./archivos.js";
 import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
 import { tienePermiso, veContrato, PERMISOS, ROLES } from "./permisos.js";
-import { migrarV6aV7, copiarUsuariosDemo, copiarMatrizInicial } from "./migracion.js";
+import { migrarV6aV7, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia } from "./migracion.js";
 
 const KEY = "acrodocs_demo_v7";
 // Claves de versiones anteriores que se migran al leer. Hoy solo v6; la lógica
@@ -210,7 +210,7 @@ const read = () => {
         if (!Array.isArray(data.usuarios)) data.usuarios = copiarUsuariosDemo();
         if (!data.permisosRoles || typeof data.permisosRoles !== "object") data.permisosRoles = copiarMatrizInicial();
         if (!Array.isArray(data.historial)) data.historial = [];
-        if (!data.empresa || typeof data.empresa !== "object") data.empresa = { razonSocial: "", ruc: "" };
+        if (!data.empresa || typeof data.empresa !== "object") data.empresa = empresaVacia();
         if (!Array.isArray(data.movimientos)) data.movimientos = [];
         if (!Array.isArray(data.cargos)) data.cargos = [];
         return data;
@@ -568,6 +568,98 @@ export const getTramite = (id) => {
   return veContrato(data.permisosRoles, usuarioActual(data), id) ? tramite : null;
 };
 
+// ---------- Ejecutor: empresa o consorcio (§5.3) ----------
+// Cada contrato guarda `ejecutor`: { tipo: "empresa" } o { tipo: "consorcio",
+// nombre, ruc, representante, integrantes: [{ razonSocial, ruc, participacion }] }.
+// `participacion` es un porcentaje (0-100). Los datos de la empresa propia viven
+// en `data.empresa` y se editan en Configuración.
+const textoLimpio = (valor) => String(valor ?? "").trim();
+
+const porcentaje = (valor) => {
+  const numero = Number(valor);
+  return Number.isFinite(numero) ? numero : 0;
+};
+
+const sinParticipacion = (valor) => valor === undefined || valor === null || String(valor).trim() === "";
+
+// Deja el ejecutor con la forma exacta que se guarda: un tipo desconocido es la
+// empresa, los textos van recortados, la participación es un número y se
+// descartan las filas de integrantes totalmente vacías.
+const normalizarEjecutor = (ejecutor) => {
+  if (ejecutor?.tipo !== "consorcio") return { tipo: "empresa" };
+  const integrantes = (Array.isArray(ejecutor.integrantes) ? ejecutor.integrantes : [])
+    .filter((i) => textoLimpio(i?.razonSocial) || textoLimpio(i?.ruc) || !sinParticipacion(i?.participacion))
+    .map((i) => ({
+      razonSocial: textoLimpio(i.razonSocial),
+      ruc: textoLimpio(i.ruc),
+      participacion: porcentaje(i.participacion),
+    }));
+  return {
+    tipo: "consorcio",
+    nombre: textoLimpio(ejecutor.nombre),
+    ruc: textoLimpio(ejecutor.ruc),
+    representante: textoLimpio(ejecutor.representante),
+    integrantes,
+  };
+};
+
+// Avisos sobre el ejecutor. No bloquean nada: la interfaz los muestra y el
+// contrato se guarda igual.
+export const validarEjecutor = (ejecutor) => {
+  if (ejecutor?.tipo !== "consorcio") return [];
+  const integrantes = Array.isArray(ejecutor.integrantes) ? ejecutor.integrantes : [];
+  if (integrantes.length === 0) return ["El consorcio no tiene integrantes."];
+  // Se redondea a centésimas para que 33.3 + 33.3 + 33.4 cuente como 100 exacto.
+  const suma = Math.round(integrantes.reduce((total, i) => total + porcentaje(i?.participacion), 0) * 100) / 100;
+  return suma === 100 ? [] : [`Las participaciones suman ${suma} %; deben sumar 100 %.`];
+};
+
+export const getEmpresa = () => {
+  const empresa = read().empresa || {};
+  return { razonSocial: String(empresa.razonSocial ?? ""), ruc: String(empresa.ruc ?? "") };
+};
+
+const entreComillas = (texto) => (texto ? `«${texto}»` : "(vacío)");
+
+// Reemplaza razón social y RUC de la empresa propia. Exige `usuarios`; el cambio
+// y su registro en el historial se guardan en una sola escritura. Sin cambios
+// reales no escribe nada.
+export const guardarEmpresa = (datos = {}) => {
+  const data = read();
+  exigirEn(data, "usuarios");
+  const anterior = {
+    razonSocial: String(data.empresa?.razonSocial ?? ""),
+    ruc: String(data.empresa?.ruc ?? ""),
+  };
+  const siguiente = { razonSocial: textoLimpio(datos?.razonSocial), ruc: textoLimpio(datos?.ruc) };
+  const notas = [];
+  if (siguiente.razonSocial !== anterior.razonSocial) {
+    notas.push(`razón social ${entreComillas(anterior.razonSocial)} → ${entreComillas(siguiente.razonSocial)}`);
+  }
+  if (siguiente.ruc !== anterior.ruc) notas.push(`RUC ${entreComillas(anterior.ruc)} → ${entreComillas(siguiente.ruc)}`);
+  if (notas.length === 0) return anterior;
+
+  data.empresa = siguiente;
+  anotarHistorial(data, {
+    accion: "editar",
+    objeto: "empresa",
+    objetoId: "empresa",
+    detalle: `Datos de la empresa: ${notas.join("; ")}`,
+  });
+  write(data);
+  return { ...siguiente };
+};
+
+// Nombre con el que se muestra al ejecutor del contrato: la razón social de la
+// empresa propia o el nombre del consorcio. El texto libre `contratista` de los
+// contratos antiguos solo sirve de respaldo para un consorcio que quedó sin nombre.
+export const nombreEjecutor = (tramite) => {
+  if (tramite?.ejecutor?.tipo === "consorcio") {
+    return textoLimpio(tramite.ejecutor.nombre) || textoLimpio(tramite.contratista) || "Consorcio sin nombre";
+  }
+  return textoLimpio(read().empresa?.razonSocial) || "Empresa propia";
+};
+
 export const createTramite = (form) => {
   const data = read();
   const t = {
@@ -575,7 +667,7 @@ export const createTramite = (form) => {
     codigo: form.codigo?.trim() || `TR-${Date.now()}`,
     denominacion: form.denominacion?.trim() || "Sin denominación",
     entidad: form.entidad || "",
-    contratista: form.contratista || "",
+    ejecutor: normalizarEjecutor(form.ejecutor),
     tipo_objeto: form.tipo_objeto || "Obra",
     area: form.area || "Infraestructura",
     monto: Number(form.monto || 0),
@@ -594,7 +686,8 @@ export const createTramite = (form) => {
 
 export const updateTramite = (id, cambios) => {
   const data = read();
-  data.tramites = data.tramites.map((t) => (t.id === id ? { ...t, ...cambios } : t));
+  const aplicar = cambios?.ejecutor === undefined ? cambios : { ...cambios, ejecutor: normalizarEjecutor(cambios.ejecutor) };
+  data.tramites = data.tramites.map((t) => (t.id === id ? { ...t, ...aplicar } : t));
   write(data);
   return data.tramites.find((t) => t.id === id) || null;
 };

@@ -21,6 +21,7 @@ const OBJETO = {
   usuarios: "usuario",
   permisos: "permisos",
   catalogo: "catálogo",
+  empresa: "empresa",
 };
 
 const cuando = (iso) => {

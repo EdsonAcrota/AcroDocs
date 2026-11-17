@@ -38,6 +38,10 @@ export const copiarMatrizInicial = () =>
 
 const clonar = (valor) => JSON.parse(JSON.stringify(valor));
 
+// Datos de la empresa propia (§5.3). Fábrica compartida con el store: cada
+// llamada devuelve un objeto nuevo, para que nadie mute un valor por defecto.
+export const empresaVacia = () => ({ razonSocial: "", ruc: "" });
+
 // §5.3: el contratista que empieza con "Consorcio" pasa a ser un ejecutor
 // consorcio (ese texto es su nombre); el resto queda como la empresa propia.
 const ejecutorDesde = (contratista) => {
@@ -67,7 +71,7 @@ export const migrarV6aV7 = (v6) => {
     usuarios: copiarUsuariosDemo(),
     permisosRoles: copiarMatrizInicial(),
     historial: [],
-    empresa: { razonSocial: "", ruc: "" },
+    empresa: empresaVacia(),
     movimientos: [],
     cargos: [],
   };

@@ -6,6 +6,7 @@ import {
   addTareaEventual, listarEventuales, listarHitosOpcionales, addHitoOpcional,
   agregarMesSCTR, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
   actualizarCatalogoPorClave, agregarCatalogoHito, moverItem, hoyISO,
+  nombreEjecutor, validarEjecutor,
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
 import { TIPOS_FIANZA, catalogoDe } from "../lib/catalogo.js";
@@ -13,6 +14,7 @@ import {
   guardarArchivo, descargarArchivo, descargarComoZip, eliminarArchivo, formatearTamano, iconoArchivo,
 } from "../lib/archivos.js";
 import HistorialLista from "../components/HistorialLista.jsx";
+import EjecutorForm from "../components/EjecutorForm.jsx";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -273,6 +275,10 @@ export default function TramiteDetalle() {
   const diasRestantes = tramite.fecha_fin
     ? diasEntre(hoyISO(), tramite.fecha_fin)
     : null;
+
+  const ejecutorConsorcio = tramite.ejecutor?.tipo === "consorcio";
+  const integrantesEjecutor = ejecutorConsorcio ? tramite.ejecutor.integrantes || [] : [];
+  const avisosEjecutor = validarEjecutor(tramite.ejecutor);
 
   const recargar = () => setItems(listItems(id));
 
@@ -775,7 +781,7 @@ export default function TramiteDetalle() {
         </div>
         <div className="encabezado-acciones">
           {permiso.editar && (
-            <button className="btn" onClick={() => { setForm(tramite); setEditando(true); }}>Editar datos</button>
+            <button className="btn" onClick={() => { setForm({ ...tramite, ejecutor: tramite.ejecutor || { tipo: "empresa" } }); setEditando(true); }}>Editar datos</button>
           )}
           {permiso.descargar && <button className="btn" onClick={descargarExpediente}>Descargar expediente</button>}
           <button className="btn" onClick={() => window.print()}>Imprimir</button>
@@ -792,12 +798,36 @@ export default function TramiteDetalle() {
 
       <div className="ficha">
         <div><b>Entidad</b><span>{tramite.entidad || "—"}</span></div>
-        <div><b>Contratista</b><span>{tramite.contratista || "—"}</span></div>
+        <div>
+          <b>Ejecutor</b>
+          <span>{nombreEjecutor(tramite)}</span>
+          <div className="ref">{ejecutorConsorcio ? "Consorcio" : "Ejecución directa"}</div>
+        </div>
         <div><b>Área usuaria</b><span>{tramite.area || "—"}</span></div>
         <div><b>Monto contractual</b><span>{fmt(tramite.monto)}</span></div>
         <div><b>Inicio</b><span>{fecha(tramite.fecha_inicio)}</span></div>
         <div><b>Fin contractual</b><span>{fecha(tramite.fecha_fin)}</span></div>
       </div>
+
+      {ejecutorConsorcio && (
+        <details className="ejecutor-detalle">
+          <summary>Integrantes del consorcio ({integrantesEjecutor.length})</summary>
+          <div className="ref">
+            RUC: {tramite.ejecutor.ruc || "—"} · Representante legal: {tramite.ejecutor.representante || "—"}
+          </div>
+          {integrantesEjecutor.length > 0 && (
+            <table className="tabla">
+              <thead><tr><th>Razón social</th><th>RUC</th><th>Participación</th></tr></thead>
+              <tbody>
+                {integrantesEjecutor.map((i, n) => (
+                  <tr key={n}><td>{i.razonSocial || "—"}</td><td>{i.ruc || "—"}</td><td>{i.participacion} %</td></tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </details>
+      )}
+      {avisosEjecutor.map((aviso) => <div className="nota-info ambar" role="status" key={aviso}>{aviso}</div>)}
 
       <div className="avance-caja">
         <div className="avance-texto">
@@ -1571,11 +1601,11 @@ export default function TramiteDetalle() {
                 </label>
                 <label className="campo-grupo ancho-completo"><span className="campo">Denominación</span><input value={form.denominacion || ""} onChange={(e) => setForm({ ...form, denominacion: e.target.value })} /></label>
                 <label className="campo-grupo"><span className="campo">Entidad</span><input value={form.entidad || ""} onChange={(e) => setForm({ ...form, entidad: e.target.value })} /></label>
-                <label className="campo-grupo"><span className="campo">Contratista</span><input value={form.contratista || ""} onChange={(e) => setForm({ ...form, contratista: e.target.value })} /></label>
                 <label className="campo-grupo"><span className="campo">Monto</span><input type="number" value={form.monto || 0} onChange={(e) => setForm({ ...form, monto: e.target.value })} /></label>
                 <label className="campo-grupo"><span className="campo">Fecha de suscripción</span><input type="date" value={form.fecha_suscripcion || ""} onChange={(e) => setForm({ ...form, fecha_suscripcion: e.target.value })} /></label>
                 <label className="campo-grupo"><span className="campo">Inicio</span><input type="date" value={form.fecha_inicio || ""} onChange={(e) => setForm({ ...form, fecha_inicio: e.target.value })} /></label>
                 <label className="campo-grupo"><span className="campo">Fin contractual</span><input type="date" value={form.fecha_fin || ""} onChange={(e) => setForm({ ...form, fecha_fin: e.target.value })} /></label>
+                <EjecutorForm value={form.ejecutor} onChange={(ejecutor) => setForm({ ...form, ejecutor })} />
               </div>
             </div>
             <div className="modal-pie">

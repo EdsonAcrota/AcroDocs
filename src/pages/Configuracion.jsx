@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import {
   getFeriados, agregarFeriado, eliminarFeriado, hoyISO, exportarDatos, listAllTareas,
   listarCatalogoHitos, agregarCatalogoHito, actualizarCatalogoHito, eliminarCatalogoHito,
-  puede, getRespaldoV6,
+  puede, getRespaldoV6, getEmpresa, guardarEmpresa,
 } from "../lib/store.js";
 import { catalogoDe } from "../lib/catalogo.js";
 import { descargarTexto, descargarComoZip } from "../lib/archivos.js";
@@ -25,6 +25,7 @@ export default function Configuracion({ onCambio }) {
     onCambio?.();
   };
   const [hayRespaldoV6] = useState(() => verRespaldo && getRespaldoV6() !== null);
+  const [empresa, setEmpresa] = useState(() => getEmpresa());
   const [feriados, setFeriados] = useState(getFeriados());
   const [nueva, setNueva] = useState("");
   const [mensaje, setMensaje] = useState("");
@@ -58,6 +59,17 @@ export default function Configuracion({ onCambio }) {
       </div>
     );
   }
+
+  const guardarDatosEmpresa = (e) => {
+    e.preventDefault();
+    try {
+      setEmpresa(guardarEmpresa(empresa));
+      setMensaje("Datos de la empresa guardados.");
+      alCambiar();
+    } catch (error) {
+      setMensaje(error?.message || "No se pudieron guardar los datos de la empresa.");
+    }
+  };
 
   const agregar = (e) => {
     e.preventDefault();
@@ -181,11 +193,35 @@ export default function Configuracion({ onCambio }) {
         <div>
           <div className="eyebrow">Configuración</div>
           <h2>Configuración</h2>
-          <p>Usuarios y permisos, feriados, catálogo y respaldos. Solo ves las secciones que tu rol permite.</p>
+          <p>Empresa, usuarios y permisos, feriados, catálogo y respaldos. Solo ves las secciones que tu rol permite.</p>
         </div>
       </div>
 
       {mensaje && <div className="nota-info">{mensaje}</div>}
+
+      {verUsuarios && (
+      <div className="tarjeta">
+        <div className="tarjeta-cab">
+          <h3>Empresa</h3>
+          <span className="ref">Ejecuta directamente los contratos que no van en consorcio</span>
+        </div>
+        <div className="cuerpo">
+          <form className="grid-form" onSubmit={guardarDatosEmpresa}>
+            <label className="campo-grupo">
+              <span className="campo">Razón social</span>
+              <input value={empresa.razonSocial} onChange={(e) => setEmpresa({ ...empresa, razonSocial: e.target.value })} placeholder="Constructora … S.A.C." />
+            </label>
+            <label className="campo-grupo">
+              <span className="campo">RUC</span>
+              <input value={empresa.ruc} onChange={(e) => setEmpresa({ ...empresa, ruc: e.target.value })} inputMode="numeric" />
+            </label>
+            <div className="acciones-descarga ancho-completo">
+              <button type="submit" className="btn primario">Guardar empresa</button>
+            </div>
+          </form>
+        </div>
+      </div>
+      )}
 
       {verUsuarios && <UsuariosPermisos onCambio={alCambiar} />}
 
@@ -321,10 +357,10 @@ export default function Configuracion({ onCambio }) {
       <div className="tarjeta">
         <div className="tarjeta-cab">
           <h3>Historial de cambios</h3>
-          <span className="ref">Catálogo, permisos y usuarios</span>
+          <span className="ref">Catálogo, permisos, usuarios, empresa y contratos eliminados</span>
         </div>
         <div className="cuerpo">
-          <HistorialLista objeto={["catalogo", "permisos", "usuarios"]} vacio="Todavía no hay cambios de catálogo, permisos ni usuarios." />
+          <HistorialLista objeto={["catalogo", "permisos", "usuarios", "empresa", "contrato"]} vacio="Todavía no hay cambios de catálogo, permisos, usuarios ni empresa." />
         </div>
       </div>
       )}

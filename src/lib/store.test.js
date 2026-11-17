@@ -1051,3 +1051,234 @@ describe("tareas visibles según el contrato", () => {
     expect(new Set(store.tareasConPlazo().map((t) => t.tramite_id))).toEqual(new Set(["t-001", "t-002"]));
   });
 });
+
+describe("ejecutor: empresa o consorcio", () => {
+  const consorcio = (integrantes) => ({
+    tipo: "consorcio",
+    nombre: "Consorcio Andino",
+    ruc: "20111111111",
+    representante: "Ana Quispe",
+    integrantes,
+  });
+
+  describe("validarEjecutor", () => {
+    it("avisa si las participaciones no suman 100", () => {
+      const avisos = store.validarEjecutor(consorcio([
+        { razonSocial: "Alfa S.A.C.", ruc: "20222222222", participacion: 60 },
+        { razonSocial: "Beta S.R.L.", ruc: "20333333333", participacion: 30 },
+      ]));
+      expect(avisos).toEqual(["Las participaciones suman 90 %; deben sumar 100 %."]);
+    });
+
+    it("no avisa cuando las participaciones suman 100", () => {
+      expect(store.validarEjecutor(consorcio([
+        { razonSocial: "Alfa", ruc: "", participacion: 60 },
+        { razonSocial: "Beta", ruc: "", participacion: 40 },
+      ]))).toEqual([]);
+    });
+
+    it("la suma se calcula con números aunque la participación llegue como texto del formulario", () => {
+      expect(store.validarEjecutor(consorcio([
+        { razonSocial: "Alfa", participacion: "70" },
+        { razonSocial: "Beta", participacion: "20" },
+      ]))).toEqual(["Las participaciones suman 90 %; deben sumar 100 %."]);
+    });
+
+    it("una suma con decimales exactos no avisa; una suma no entera se muestra con decimales", () => {
+      expect(store.validarEjecutor(consorcio([
+        { razonSocial: "A", participacion: 33.3 },
+        { razonSocial: "B", participacion: 33.3 },
+        { razonSocial: "C", participacion: 33.4 },
+      ]))).toEqual([]);
+      expect(store.validarEjecutor(consorcio([
+        { razonSocial: "A", participacion: 33.3 },
+        { razonSocial: "B", participacion: 33.3 },
+      ]))).toEqual(["Las participaciones suman 66.6 %; deben sumar 100 %."]);
+    });
+
+    it("una participación vacía o inválida cuenta como cero", () => {
+      expect(store.validarEjecutor(consorcio([
+        { razonSocial: "A", participacion: "" },
+        { razonSocial: "B", participacion: 50 },
+      ]))).toEqual(["Las participaciones suman 50 %; deben sumar 100 %."]);
+    });
+
+    it("consorcio sin integrantes produce aviso", () => {
+      expect(store.validarEjecutor(consorcio([]))).toEqual(["El consorcio no tiene integrantes."]);
+      expect(store.validarEjecutor({ tipo: "consorcio", nombre: "X" })).toEqual(["El consorcio no tiene integrantes."]);
+    });
+
+    it("la empresa propia y un ejecutor ausente no producen avisos", () => {
+      expect(store.validarEjecutor({ tipo: "empresa" })).toEqual([]);
+      expect(store.validarEjecutor(undefined)).toEqual([]);
+      expect(store.validarEjecutor(null)).toEqual([]);
+    });
+
+    it("no modifica el ejecutor recibido", () => {
+      const ejecutor = consorcio([{ razonSocial: "A", participacion: "40" }]);
+      const copia = JSON.parse(JSON.stringify(ejecutor));
+      store.validarEjecutor(ejecutor);
+      expect(ejecutor).toEqual(copia);
+    });
+  });
+
+  describe("createTramite", () => {
+    it("guarda ejecutor consorcio", () => {
+      entrar("gerente");
+      const t = store.createTramite({
+        codigo: "OC-9", denominacion: "Obra nueva",
+        ejecutor: consorcio([
+          { razonSocial: "Alfa S.A.C.", ruc: "20222222222", participacion: 60 },
+          { razonSocial: "Beta S.R.L.", ruc: "20333333333", participacion: 40 },
+        ]),
+      });
+      expect(t.ejecutor).toEqual({
+        tipo: "consorcio",
+        nombre: "Consorcio Andino",
+        ruc: "20111111111",
+        representante: "Ana Quispe",
+        integrantes: [
+          { razonSocial: "Alfa S.A.C.", ruc: "20222222222", participacion: 60 },
+          { razonSocial: "Beta S.R.L.", ruc: "20333333333", participacion: 40 },
+        ],
+      });
+      expect(store.getTramite(t.id).ejecutor).toEqual(t.ejecutor);
+      expect(leerV7().tramites.find((x) => x.id === t.id).ejecutor.tipo).toBe("consorcio");
+    });
+
+    it("sin ejecutor el contrato queda a cargo de la empresa y ya no escribe el campo libre contratista", () => {
+      entrar("gerente");
+      const t = store.createTramite({ codigo: "OC-10", denominacion: "Otra obra", contratista: "texto viejo" });
+      expect(t.ejecutor).toEqual({ tipo: "empresa" });
+      expect(t.contratista).toBeUndefined();
+    });
+
+    it("normaliza el ejecutor: recorta textos, convierte participaciones a número y descarta campos ajenos", () => {
+      entrar("gerente");
+      const t = store.createTramite({
+        codigo: "OC-11", denominacion: "Obra",
+        ejecutor: {
+          tipo: "consorcio", nombre: "  Consorcio Sur ", ruc: " 20444444444 ", representante: " Luis ",
+          integrantes: [{ razonSocial: " Alfa ", ruc: " 20 ", participacion: "55.5", otro: "x" }],
+          basura: true,
+        },
+      });
+      expect(t.ejecutor).toEqual({
+        tipo: "consorcio", nombre: "Consorcio Sur", ruc: "20444444444", representante: "Luis",
+        integrantes: [{ razonSocial: "Alfa", ruc: "20", participacion: 55.5 }],
+      });
+    });
+
+    it("descarta las filas de integrantes totalmente vacías pero conserva las que tienen algún dato", () => {
+      entrar("gerente");
+      const t = store.createTramite({
+        codigo: "OC-13", denominacion: "Obra",
+        ejecutor: consorcio([
+          { razonSocial: "", ruc: "", participacion: "" },
+          { razonSocial: "Alfa", ruc: "", participacion: "" },
+          { razonSocial: "", ruc: "", participacion: "40" },
+        ]),
+      });
+      expect(t.ejecutor.integrantes).toEqual([
+        { razonSocial: "Alfa", ruc: "", participacion: 0 },
+        { razonSocial: "", ruc: "", participacion: 40 },
+      ]);
+    });
+
+    it("un tipo desconocido se guarda como empresa", () => {
+      entrar("gerente");
+      const t = store.createTramite({ codigo: "OC-12", denominacion: "Obra", ejecutor: { tipo: "otro", nombre: "X" } });
+      expect(t.ejecutor).toEqual({ tipo: "empresa" });
+    });
+  });
+
+  describe("updateTramite", () => {
+    it("normaliza el ejecutor al editar un contrato existente y conserva el resto", () => {
+      entrar("gerente");
+      const t = store.updateTramite("t-002", {
+        ejecutor: { tipo: "consorcio", nombre: " Consorcio Nuevo ", integrantes: [{ razonSocial: "A", participacion: "100" }] },
+      });
+      expect(t.ejecutor).toEqual({
+        tipo: "consorcio", nombre: "Consorcio Nuevo", ruc: "", representante: "",
+        integrantes: [{ razonSocial: "A", ruc: "", participacion: 100 }],
+      });
+      expect(t.codigo).toBe("DEMO-CA-2026-002");
+      const vuelta = store.updateTramite("t-002", { ejecutor: { tipo: "empresa", nombre: "residuo" } });
+      expect(vuelta.ejecutor).toEqual({ tipo: "empresa" });
+    });
+
+    it("sin ejecutor en los cambios no lo toca", () => {
+      entrar("gerente");
+      const antes = store.getTramite("t-001").ejecutor;
+      store.updateTramite("t-001", { estado: "Paralizado" });
+      expect(store.getTramite("t-001").ejecutor).toEqual(antes);
+    });
+  });
+
+  describe("empresa propia", () => {
+    it("getEmpresa devuelve la empresa vacía de una instalación nueva, como copia", () => {
+      expect(store.getEmpresa()).toEqual({ razonSocial: "", ruc: "" });
+      store.getEmpresa().razonSocial = "mutada";
+      expect(store.getEmpresa()).toEqual({ razonSocial: "", ruc: "" });
+    });
+
+    it("guardarEmpresa exige el permiso usuarios", () => {
+      expect(() => store.guardarEmpresa({ razonSocial: "X", ruc: "1" })).toThrow("No tienes permiso para esta acción."); // sin sesión
+      entrar("jefe");
+      expect(() => store.guardarEmpresa({ razonSocial: "X", ruc: "1" })).toThrow("No tienes permiso para esta acción.");
+      expect(store.getEmpresa()).toEqual({ razonSocial: "", ruc: "" });
+      expect(store.listarHistorial({ objeto: "empresa" })).toEqual([]);
+    });
+
+    it("guardarEmpresa recorta los textos, guarda y deja un registro en el historial", () => {
+      const session = entrar("gerente");
+      const guardada = store.guardarEmpresa({ razonSocial: "  Constructora Acro S.A.C. ", ruc: " 20555555555 " });
+      expect(guardada).toEqual({ razonSocial: "Constructora Acro S.A.C.", ruc: "20555555555" });
+      expect(store.getEmpresa()).toEqual(guardada);
+      expect(leerV7().empresa).toEqual(guardada);
+      const [h] = store.listarHistorial({ objeto: "empresa" });
+      expect(h).toMatchObject({ accion: "editar", objeto: "empresa", usuario: session.nombre });
+      expect(h.detalle).toContain("Constructora Acro S.A.C.");
+      expect(h.detalle).toContain("20555555555");
+    });
+
+    it("guardar sin cambios no escribe otra entrada en el historial", () => {
+      entrar("gerente");
+      store.guardarEmpresa({ razonSocial: "Acro", ruc: "20555555555" });
+      store.guardarEmpresa({ razonSocial: " Acro ", ruc: "20555555555" });
+      expect(store.listarHistorial({ objeto: "empresa" })).toHaveLength(1);
+    });
+
+    it("guardarEmpresa tolera datos ausentes", () => {
+      entrar("gerente");
+      expect(store.guardarEmpresa({ razonSocial: "Acro" })).toEqual({ razonSocial: "Acro", ruc: "" });
+      expect(store.guardarEmpresa()).toEqual({ razonSocial: "", ruc: "" });
+    });
+  });
+
+  describe("nombreEjecutor", () => {
+    it("la empresa muestra su razón social; sin configurar muestra un texto de reemplazo", () => {
+      entrar("gerente");
+      const t = store.getTramite("t-002");
+      expect(store.nombreEjecutor(t)).toBe("Empresa propia");
+      store.guardarEmpresa({ razonSocial: "Constructora Acro S.A.C.", ruc: "" });
+      expect(store.nombreEjecutor(t)).toBe("Constructora Acro S.A.C.");
+    });
+
+    it("el consorcio muestra su nombre", () => {
+      entrar("gerente");
+      expect(store.nombreEjecutor(store.getTramite("t-001"))).toBe("Consorcio Educativo Quelcaya");
+      expect(store.nombreEjecutor({ ejecutor: consorcio([]) })).toBe("Consorcio Andino");
+    });
+
+    it("un consorcio antiguo sin nombre usa el texto libre de contratista y, si no hay, un rótulo", () => {
+      expect(store.nombreEjecutor({ ejecutor: { tipo: "consorcio", nombre: "", integrantes: [] }, contratista: "Consorcio Viejo" })).toBe("Consorcio Viejo");
+      expect(store.nombreEjecutor({ ejecutor: { tipo: "consorcio", integrantes: [] } })).toBe("Consorcio sin nombre");
+    });
+
+    it("un contrato sin ejecutor se trata como de la empresa", () => {
+      expect(store.nombreEjecutor({ codigo: "X" })).toBe("Empresa propia");
+      expect(store.nombreEjecutor(null)).toBe("Empresa propia");
+    });
+  });
+});

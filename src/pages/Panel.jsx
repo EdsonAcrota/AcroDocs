@@ -1,7 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import {
-  listTramites, listItems, resumenTramite, tareasConPlazo, hoyISO, puede,
+  listTramites, listItems, resumenTramite, tareasConPlazo, hoyISO, puede, nombreEjecutor,
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
 
@@ -83,7 +83,7 @@ export default function Panel() {
                 <div className="fila-principal">
                   <div className="codigo">{t.codigo}</div>
                   <strong>{t.denominacion}</strong>
-                  <div className="ref">{t.entidad} · {t.contratista}</div>
+                  <div className="ref">{t.entidad} · {nombreEjecutor(t)}</div>
                 </div>
                 <div className="fila-lado">
                   <span className="badge azul">{t.tipo_objeto}</span>

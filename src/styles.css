@@ -610,3 +610,22 @@ input[readonly] { background: #f2f4f1; color: var(--muted); }
   .kpi { border-bottom: 1px solid var(--line); }
 }
 .archivo-fila .subir-archivo { margin-top: 0; }
+
+/* ---------- Ejecutor: empresa o consorcio ---------- */
+.nota-info.ambar { background: var(--amber-wash); border-color: #e6d5ac; border-left-color: var(--amber); }
+.ejecutor-form { border: 1px solid var(--line); background: var(--sheet-2); border-radius: var(--radius); padding: 12px 14px 4px; margin-bottom: 13px; }
+.ejecutor-form .nota-info { margin: 8px 0; }
+.ejecutor-form > .ref { margin: -4px 0 10px; }
+.integrantes-cab, .integrante-fila { display: grid; grid-template-columns: minmax(0, 2fr) minmax(0, 1.2fr) 110px 28px; gap: 8px; align-items: center; }
+.integrantes-cab { font-size: 11px; font-weight: 600; color: var(--ink-2); margin-bottom: 5px; }
+.integrante-fila { margin-bottom: 8px; }
+.integrantes-pie { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 10px; }
+.ejecutor-detalle { background: var(--sheet); border: 1px solid var(--line); border-radius: var(--radius); padding: 9px 14px; margin: -4px 0 14px; font-size: 12px; }
+.ejecutor-detalle summary { cursor: pointer; font-weight: 600; color: var(--ink-2); }
+.ejecutor-detalle .tabla { margin-top: 8px; }
+.ejecutor-detalle .tabla td, .ejecutor-detalle .tabla th { padding: 6px 10px; }
+@media (max-width: 640px) {
+  .integrantes-cab { display: none; }
+  .integrante-fila { grid-template-columns: minmax(0, 1fr) 100px 28px; }
+  .integrante-fila input:first-child { grid-column: 1 / -1; }
+}
