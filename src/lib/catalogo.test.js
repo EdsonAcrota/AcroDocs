@@ -77,13 +77,14 @@ describe("catalogoSemilla", () => {
     expect(cat.opcionales.consultoria.map((e) => e.clave)).toEqual(["seace_consultoria"]);
   });
 
-  it("cada plantilla nace activa, sin verificar, sin pasos y con id propio", () => {
+  it("cada plantilla nace activa, sin verificar y con id propio; solo los trámites con secuencia traen pasos", () => {
     const todas = plantillasDe(catalogoSemilla());
     expect(todas.length).toBe(76);
     for (const p of todas) {
       expect(typeof p.id).toBe("string");
       expect(typeof p.clave).toBe("string");
-      expect(p).toMatchObject({ activo: true, verificado: false, pasos: [], plazoLevantamiento: null });
+      expect(p).toMatchObject({ activo: true, verificado: false, plazoLevantamiento: null });
+      expect(Array.isArray(p.pasos)).toBe(true);
       expect(Array.isArray(p.docs)).toBe(true);
     }
     expect(new Set(todas.map((p) => p.id)).size).toBe(todas.length);

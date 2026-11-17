@@ -4,6 +4,8 @@
 // desde el expediente cuando ocurren.
 
 import { hoy, sumarDias, sumarHabiles } from "./fechas.js";
+import { instanciarPasos } from "./flujo.js";
+import { pasosSemillaDe } from "./pasosSemilla.js";
 
 const uid = () =>
   (typeof crypto !== "undefined" && crypto.randomUUID)
@@ -356,35 +358,50 @@ const calcularVence = (tramite, plantilla, feriados) => {
     : sumarHabiles(fechaBase, dias, feriados);
 };
 
-const crearTarea = (tramite, etapa, seccion, plantilla, extra = {}) => ({
-  id: uid(),
-  tramite_id: tramite.id,
-  codigo: plantilla.codigo,
-  nombre: plantilla.nombre,
-  etapaCodigo: etapa.codigo,
-  etapaNombre: etapa.nombre,
-  seccionCodigo: seccion.codigo,
-  seccionNombre: seccion.nombre,
-  tipo: "fijo",
-  plantilla: plantilla.codigo,
-  clavePlantilla: extra.clavePlantilla || plantilla.codigo,
-  docCumplimiento: plantilla.cumplimiento || "",
-  estado: "Pendiente",
-  responsable: "",
-  fecha: "",
-  fecha_limite: "",
-  observacion: "",
-  docsRequeridos: [...(plantilla.docs || [])],
-  documentos: [],
-  plazoDias: plantilla.plazoDias || 0,
-  plazoBase: plantilla.plazoBase || "inicio",
-  plazoHabiles: plantilla.plazoHabiles !== false,
-  norma: plantilla.norma || "",
-  nota: plantilla.nota || "",
-  recurrente: false,
-  periodo: "",
-  ...extra,
-});
+const crearTarea = (tramite, etapa, seccion, plantilla, extra = {}) => {
+  const tarea = {
+    id: uid(),
+    tramite_id: tramite.id,
+    codigo: plantilla.codigo,
+    nombre: plantilla.nombre,
+    etapaCodigo: etapa.codigo,
+    etapaNombre: etapa.nombre,
+    seccionCodigo: seccion.codigo,
+    seccionNombre: seccion.nombre,
+    tipo: "fijo",
+    plantilla: plantilla.codigo,
+    clavePlantilla: extra.clavePlantilla || plantilla.codigo,
+    docCumplimiento: plantilla.cumplimiento || "",
+    estado: "Pendiente",
+    responsable: "",
+    fecha: "",
+    fecha_limite: "",
+    observacion: "",
+    docsRequeridos: [...(plantilla.docs || [])],
+    documentos: [],
+    plazoDias: plantilla.plazoDias || 0,
+    plazoBase: plantilla.plazoBase || "inicio",
+    plazoHabiles: plantilla.plazoHabiles !== false,
+    norma: plantilla.norma || "",
+    nota: plantilla.nota || "",
+    recurrente: false,
+    periodo: "",
+    ...extra,
+  };
+  // Un hito con pasos lleva su propia copia. El primer paso toma el plazo que el
+  // hito ya tenía, salvo en un trámite eventual: ahí los plazos son los de sus pasos.
+  const pasos = plantilla.pasos || [];
+  if (pasos.length) {
+    const fija = tarea.tipo === "eventual" ? "" : tarea.fecha_limite;
+    tarea.pasos = instanciarPasos(pasos, fija);
+    tarea.plazoLevantamiento = plantilla.plazoLevantamiento || null;
+    tarea.fecha_limite = fija;
+  } else {
+    tarea.pasos = [];
+    tarea.plazoLevantamiento = null;
+  }
+  return tarea;
+};
 
 // ------------------------ CATÁLOGO ALMACENADO ------------------------
 // OBRA, CONSULTORIA, EVENTUALES y HITOS_OPCIONALES son solo la semilla (§5.4).
@@ -436,6 +453,7 @@ const desdeT = (clave, t) => completarPlantilla({
   plazoHabiles: t.plazoHabiles,
   norma: t.norma,
   nota: t.nota,
+  pasos: pasosSemillaDe(clave),
 });
 
 // Los hitos fijos llevan además su `codigo` explícito (el número con el que se
@@ -476,6 +494,7 @@ const eventualSemilla = (e) => completarPlantilla({
   nota: "Trámite eventual agregado al expediente. No se crea automáticamente.",
   silencioPositivo: Boolean(e.silencioPositivo),
   diasSilencio: e.dias || 0,
+  pasos: pasosSemillaDe(e.clave),
 });
 
 const opcionalSemilla = (o) => completarPlantilla({
@@ -952,6 +971,8 @@ export const crearTareaEventual = (tramite, clave, existentes = [], catalogo, fe
     plazoHabiles: habiles,
     norma: modelo.norma || "",
     nota: modelo.nota || "Trámite eventual agregado al expediente. No se crea automáticamente.",
+    pasos: modelo.pasos || [],
+    plazoLevantamiento: modelo.plazoLevantamiento || null,
   }, {
     tipo: "eventual",
     clave: modelo.clave,

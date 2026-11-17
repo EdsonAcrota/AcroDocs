@@ -55,7 +55,7 @@ describe("instalación nueva (seed v7)", () => {
     expect(t1.ejecutor).toMatchObject({ tipo: "consorcio", nombre: "Consorcio Educativo Quelcaya" });
     expect(data.tramites.find((t) => t.id === "t-002").ejecutor).toEqual({ tipo: "empresa" });
     expect(data.items.length).toBeGreaterThan(0);
-    expect(data.items.every((i) => Array.isArray(i.pasos) && i.pasos.length === 0)).toBe(true);
+    expect(data.items.every((i) => Array.isArray(i.pasos))).toBe(true);
   });
 });
 

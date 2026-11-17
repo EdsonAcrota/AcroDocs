@@ -881,7 +881,7 @@
     {
       "codigo": "1.4.1",
       "nombre": "Cambio de personal clave",
-      "fecha_limite": "2026-12-01",
+      "fecha_limite": "",
       "tipo": "eventual",
       "clavePlantilla": "1.4.1",
       "etapaCodigo": "1.4",
@@ -5755,7 +5755,7 @@
     {
       "codigo": "1.4.1",
       "nombre": "Ampliación de plazo",
-      "fecha_limite": "2026-12-01",
+      "fecha_limite": "",
       "tipo": "eventual",
       "clavePlantilla": "1.4.1",
       "etapaCodigo": "1.4",
