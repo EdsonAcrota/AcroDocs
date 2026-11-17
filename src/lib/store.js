@@ -12,9 +12,16 @@ import {
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
 import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
+import { tienePermiso, veContrato } from "./permisos.js";
+import { migrarV6aV7, copiarUsuariosDemo, copiarMatrizInicial } from "./migracion.js";
 
-const KEY = "acrodocs_demo_v6";
-const KEYS_ANTERIORES = [];
+const KEY = "acrodocs_demo_v7";
+// Claves de versiones anteriores que se migran al leer. Hoy solo v6; la lógica
+// de transformación vive en migracion.js.
+const KEYS_ANTERIORES = ["acrodocs_demo_v6"];
+// Copia del texto crudo de v6, guardada antes de borrar la clave vieja
+// (§5.8: respaldo previo a la migración). Configuración la ofrece para descargar.
+const RESPALDO_V6 = "acrodocs_respaldo_v6";
 
 const uid = () =>
   (typeof crypto !== "undefined" && crypto.randomUUID)
@@ -40,6 +47,8 @@ const marcar = (tareas, completados = [], revision = [], observados = []) => {
   return tareas;
 };
 
+// La instalación nueva se arma con la forma v6 y se pasa por la misma
+// migración que usan los datos existentes, para que ambas rutas den el mismo v7.
 const seed = () => {
   const data = {
     version: 6,
@@ -130,7 +139,7 @@ const seed = () => {
   data.configFianzas[data.tramites[0].id] = { periodo: "anual", tipos: ["fiel_cumplimiento"] };
   data.configFianzas[data.tramites[1].id] = { periodo: "anual", tipos: ["fiel_cumplimiento"] };
   data.items = ordenarTareas([...obra, ...consultoria]);
-  return data;
+  return migrarV6aV7(data);
 };
 
 const migrar = (anterior) => {
@@ -193,18 +202,26 @@ const read = () => {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const data = JSON.parse(raw);
-      if (Number(data.version) >= 6) {
+      if (Number(data.version) >= 7) {
         if (!Array.isArray(data.feriados)) data.feriados = [...FERIADOS_2026];
         if (!data.plantillasDocs || typeof data.plantillasDocs !== "object") data.plantillasDocs = plantillasPorDefecto();
         if (!Array.isArray(data.catalogoHitos)) data.catalogoHitos = [];
         if (!data.configFianzas || typeof data.configFianzas !== "object") data.configFianzas = {};
+        if (!Array.isArray(data.usuarios)) data.usuarios = copiarUsuariosDemo();
+        if (!data.permisosRoles || typeof data.permisosRoles !== "object") data.permisosRoles = copiarMatrizInicial();
+        if (!Array.isArray(data.historial)) data.historial = [];
+        if (!data.empresa || typeof data.empresa !== "object") data.empresa = { razonSocial: "", ruc: "" };
+        if (!Array.isArray(data.movimientos)) data.movimientos = [];
+        if (!Array.isArray(data.cargos)) data.cargos = [];
         return data;
       }
     }
     for (const key of KEYS_ANTERIORES) {
       const anterior = localStorage.getItem(key);
       if (anterior) {
-        const data = migrar(JSON.parse(anterior));
+        const data = migrarV6aV7(JSON.parse(anterior));
+        // Si el respaldo no cabe, la migración sigue: no se bloquea el arranque.
+        try { localStorage.setItem(RESPALDO_V6, anterior); } catch { /* sin espacio */ }
         localStorage.setItem(KEY, JSON.stringify(data));
         localStorage.removeItem(key);
         return data;
@@ -242,32 +259,56 @@ export const eliminarFeriado = (fecha) => {
   return getFeriados();
 };
 
-// ---------- Sesión ----------
-export const getSession = () => read().session;
+// ---------- Sesión y permisos ----------
+// En los datos solo se guarda `session: { usuarioId }`. La ficha completa se
+// resuelve contra `data.usuarios` en cada lectura, así un cambio de rol,
+// asignaciones o estado activo se refleja de inmediato en la sesión abierta.
+const usuarioActual = (data) => {
+  const id = data.session?.usuarioId;
+  if (!id) return null;
+  const usuario = (data.usuarios || []).find((u) => u.id === id);
+  return usuario && usuario.activo ? usuario : null;
+};
+
+const fichaDeSesion = (usuario) => ({
+  usuarioId: usuario.id,
+  nombre: usuario.nombre,
+  email: usuario.email,
+  rol: usuario.rol,
+  contratos: [...(usuario.contratos || [])],
+});
+
+const puedeEn = (data, permiso, tramiteId) =>
+  tienePermiso(data.permisosRoles, usuarioActual(data), permiso, tramiteId);
+
+const exigirEn = (data, permiso, tramiteId) => {
+  if (!puedeEn(data, permiso, tramiteId)) throw new Error("No tienes permiso para esta acción.");
+};
+
+export const getSession = () => {
+  const usuario = usuarioActual(read());
+  return usuario ? fichaDeSesion(usuario) : null;
+};
+
+// ¿La sesión actual tiene el permiso? Con `tramiteId`, además debe ver ese contrato.
+export const puede = (permiso, tramiteId) => puedeEn(read(), permiso, tramiteId);
+
+// Igual que `puede`, pero lanza un error en vez de devolver false.
+export const exigir = (permiso, tramiteId) => exigirEn(read(), permiso, tramiteId);
 
 export const loginDemo = (email, password) => {
   const data = read();
   const correo = (email || "").trim().toLowerCase();
-  const claves = {
-    "admin@acrodocs.local": "admin123",
-    "logistica@acrodocs.local": "logistica123",
-    "area@acrodocs.local": "area123",
-    "legal@acrodocs.local": "legal123",
-    "lectura@acrodocs.local": "lectura123",
-  };
-  if (!claves[correo] || claves[correo] !== password) {
+  const usuario = (data.usuarios || []).find((u) => String(u.email || "").toLowerCase() === correo);
+  if (!usuario || usuario.password !== password) {
     return { error: "Credenciales incorrectas. Revisa los usuarios de demostración." };
   }
-  const roles = {
-    "admin@acrodocs.local": { nombre: "Administrador", rol: "admin" },
-    "logistica@acrodocs.local": { nombre: "Logística", rol: "logistica" },
-    "area@acrodocs.local": { nombre: "Área Usuaria", rol: "area_usuaria" },
-    "legal@acrodocs.local": { nombre: "Asesoría Legal", rol: "legal" },
-    "lectura@acrodocs.local": { nombre: "Consulta", rol: "lectura" },
-  };
-  data.session = { email: correo, ...roles[correo] };
+  if (!usuario.activo) {
+    return { error: "Este usuario está desactivado. Consulta con el gerente general." };
+  }
+  data.session = { usuarioId: usuario.id };
   write(data);
-  return { session: data.session };
+  return { session: fichaDeSesion(usuario) };
 };
 
 export const logout = () => {
@@ -276,11 +317,64 @@ export const logout = () => {
   write(data);
 };
 
-// ---------- Contratos / trámites ----------
-export const listTramites = () =>
-  [...read().tramites].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+// ---------- Historial (auditoría) ----------
+// Anota sobre `data` sin escribir: las funciones destructivas lo usan para que
+// el cambio y su registro se guarden en una sola escritura.
+const anotarHistorial = (data, { accion, objeto, objetoId, tramiteId, detalle }) => {
+  const usuario = usuarioActual(data);
+  const entrada = {
+    id: uid(),
+    fecha: new Date().toISOString(),
+    usuario: usuario?.nombre || "Sistema",
+    usuarioId: usuario?.id || null,
+    accion,
+    objeto,
+    objetoId,
+    detalle: detalle || "",
+  };
+  if (tramiteId !== undefined && tramiteId !== null) entrada.tramiteId = tramiteId;
+  if (!Array.isArray(data.historial)) data.historial = [];
+  data.historial.push(entrada);
+  return entrada;
+};
 
-export const getTramite = (id) => read().tramites.find((t) => t.id === id) || null;
+export const registrarHistorial = (entrada) => {
+  const data = read();
+  const registro = anotarHistorial(data, entrada);
+  write(data);
+  return registro;
+};
+
+// Del más reciente al más antiguo. `objeto` acepta un texto o una lista de textos.
+// Solo muestra entradas de contratos que el usuario ve; sin sesión no hay nada.
+export const listarHistorial = ({ tramiteId, objeto } = {}) => {
+  const data = read();
+  const usuario = usuarioActual(data);
+  if (!usuario) return [];
+  const objetos = objeto === undefined || objeto === null ? null : [].concat(objeto);
+  return [...(data.historial || [])]
+    .reverse()
+    .filter((h) => tramiteId === undefined || tramiteId === null || h.tramiteId === tramiteId)
+    .filter((h) => !objetos || objetos.includes(h.objeto))
+    .filter((h) => h.tramiteId === undefined || h.tramiteId === null || veContrato(data.permisosRoles, usuario, h.tramiteId));
+};
+
+// ---------- Contratos / trámites ----------
+export const listTramites = () => {
+  const data = read();
+  const usuario = usuarioActual(data);
+  return data.tramites
+    .filter((t) => veContrato(data.permisosRoles, usuario, t.id))
+    .sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+};
+
+// Devuelve null si el contrato no existe o la sesión no lo puede ver.
+export const getTramite = (id) => {
+  const data = read();
+  const tramite = data.tramites.find((t) => t.id === id);
+  if (!tramite) return null;
+  return veContrato(data.permisosRoles, usuarioActual(data), id) ? tramite : null;
+};
 
 export const createTramite = (form) => {
   const data = read();
@@ -311,6 +405,44 @@ export const updateTramite = (id, cambios) => {
   data.tramites = data.tramites.map((t) => (t.id === id ? { ...t, ...cambios } : t));
   write(data);
   return data.tramites.find((t) => t.id === id) || null;
+};
+
+// Archivos (IndexedDB) de un documento: el vigente y, cuando existan, sus versiones.
+// El borrado es "fire and forget": un fallo del almacén de archivos no frena la operación.
+const borrarArchivosDeItems = (items) => {
+  for (const item of items) {
+    for (const doc of item?.documentos || []) {
+      const ids = [doc?.archivoId, ...(doc?.versiones || []).map((v) => v?.archivoId)];
+      for (const archivoId of ids) {
+        if (archivoId) eliminarArchivo(archivoId).catch(() => {});
+      }
+    }
+  }
+};
+
+// Elimina el contrato con sus hitos y los archivos de estos. Exige `eliminar`.
+export const deleteTramite = (id) => {
+  const data = read();
+  exigirEn(data, "eliminar", id);
+  const tramite = data.tramites.find((t) => t.id === id);
+  if (!tramite) return false;
+  borrarArchivosDeItems(data.items.filter((i) => i.tramite_id === id));
+  data.tramites = data.tramites.filter((t) => t.id !== id);
+  data.items = data.items.filter((i) => i.tramite_id !== id);
+  data.ampliaciones = (data.ampliaciones || []).filter((a) => a.tramite_id !== id);
+  if (data.configFianzas) delete data.configFianzas[id];
+  for (const usuario of data.usuarios || []) {
+    if (Array.isArray(usuario.contratos)) usuario.contratos = usuario.contratos.filter((c) => c !== id);
+  }
+  anotarHistorial(data, {
+    accion: "eliminar",
+    objeto: "contrato",
+    objetoId: id,
+    tramiteId: id,
+    detalle: `${tramite.codigo} — ${tramite.denominacion}`,
+  });
+  write(data);
+  return true;
 };
 
 // ---------- Expediente: hitos y trámites ----------
@@ -372,10 +504,17 @@ export const addItem = (tramiteId, nombre, etapaNombre = "Hitos propios", extra 
 export const removeItem = (id) => {
   const data = read();
   const item = data.items.find((i) => i.id === id);
-  for (const doc of item?.documentos || []) {
-    if (doc.archivoId) eliminarArchivo(doc.archivoId).catch(() => {});
-  }
+  exigirEn(data, "borrar_hito", item?.tramite_id);
+  if (!item) return;
+  borrarArchivosDeItems([item]);
   data.items = data.items.filter((i) => i.id !== id);
+  anotarHistorial(data, {
+    accion: "eliminar",
+    objeto: "hito",
+    objetoId: id,
+    tramiteId: item.tramite_id,
+    detalle: `${item.codigo} — ${item.nombre}`,
+  });
   write(data);
 };
 
