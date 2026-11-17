@@ -3,52 +3,18 @@
 // Los trámites eventuales (cambio de personal, ampliación, etc.) se agregan
 // desde el expediente cuando ocurren.
 
-const FERIADOS_BASE = [
-  "2026-01-01", "2026-01-02", "2026-04-02", "2026-04-03", "2026-05-01",
-  "2026-06-07", "2026-06-29", "2026-07-23", "2026-07-28", "2026-07-29",
-  "2026-08-06", "2026-08-30", "2026-10-08", "2026-11-01", "2026-12-08",
-  "2026-12-09", "2026-12-25",
-];
-let feriadosActivos = [...FERIADOS_BASE];
-
-export const configurarFeriados = (feriados) => {
-  feriadosActivos = Array.isArray(feriados)
-    ? [...new Set(feriados)].sort()
-    : [...FERIADOS_BASE];
-};
+import { hoy, sumarDias, sumarHabiles } from "./fechas.js";
 
 const uid = () =>
   (typeof crypto !== "undefined" && crypto.randomUUID)
     ? crypto.randomUUID()
     : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
 
-const hoy = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-};
 const pad = (n) => String(n).padStart(2, "0");
 const MESES = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 
 const parseFecha = (iso) => (iso ? new Date(`${iso}T12:00:00`) : new Date());
 const iso = (d) => d.toISOString().slice(0, 10);
-
-const sumarDias = (fecha, dias) => {
-  const d = parseFecha(fecha);
-  d.setDate(d.getDate() + Number(dias || 0));
-  return iso(d);
-};
-
-const sumarHabiles = (fecha, dias, feriados = feriadosActivos) => {
-  const d = parseFecha(fecha);
-  let n = Number(dias) || 0;
-  while (n > 0) {
-    d.setDate(d.getDate() + 1);
-    const f = iso(d);
-    const dow = d.getDay();
-    if (dow !== 0 && dow !== 6 && !feriados.includes(f)) n -= 1;
-  }
-  return iso(d);
-};
 
 const addMeses = (fecha, meses) => {
   const d = fecha instanceof Date ? new Date(fecha) : parseFecha(fecha);
@@ -377,7 +343,7 @@ export const esConsultoria = (tipo) => String(tipo || "").toLowerCase().includes
 
 export const catalogoDe = (tipo) => (esConsultoria(tipo) ? CONSULTORIA : OBRA);
 
-const calcularVence = (tramite, plantilla) => {
+const calcularVence = (tramite, plantilla, feriados) => {
   const dias = Number(plantilla.plazoDias || 0);
   if (!dias) return "";
   const fechaBase = plantilla.plazoBase === "suscripcion"
@@ -385,7 +351,7 @@ const calcularVence = (tramite, plantilla) => {
     : (tramite.fecha_inicio || hoy());
   return plantilla.plazoHabiles === false
     ? sumarDias(fechaBase, dias)
-    : sumarHabiles(fechaBase, dias);
+    : sumarHabiles(fechaBase, dias, feriados);
 };
 
 const crearTarea = (tramite, etapa, seccion, plantilla, extra = {}) => ({
@@ -418,7 +384,7 @@ const crearTarea = (tramite, etapa, seccion, plantilla, extra = {}) => ({
   ...extra,
 });
 
-export const crearTareas = (tramite, plantillasDocs = {}, catalogoHitos = []) => {
+export const crearTareas = (tramite, plantillasDocs = {}, catalogoHitos = [], feriados) => {
   const catalogo = catalogoDe(tramite.tipo_objeto);
   const tareas = [];
   const docsDe = (clave, originales) => plantillasDocs[clave]?.docs || originales || [];
@@ -495,7 +461,7 @@ export const crearTareas = (tramite, plantillasDocs = {}, catalogoHitos = []) =>
             nota: override.nota !== undefined ? override.nota : plantilla.nota,
           };
           tareas.push(crearTarea(tramite, etapa, seccion, efectiva, {
-            fecha_limite: calcularVence(tramite, efectiva),
+            fecha_limite: calcularVence(tramite, efectiva, feriados),
           }));
         }
       }
@@ -527,7 +493,7 @@ export const crearTareas = (tramite, plantillasDocs = {}, catalogoHitos = []) =>
       nota: hito.nota || "Hito agregado al catálogo personalizado.",
     };
     tareas.push(crearTarea(tramite, etapa, seccion, plantilla, {
-      fecha_limite: calcularVence(tramite, plantilla),
+      fecha_limite: calcularVence(tramite, plantilla, feriados),
       plantilla: clave,
       clavePlantilla: clave,
       origen: "catalogo",
@@ -620,7 +586,7 @@ export const HITOS_OPCIONALES = {
 export const listarHitosOpcionales = (tipo) =>
   esConsultoria(tipo) ? HITOS_OPCIONALES["Consultoría de obra"] : HITOS_OPCIONALES.Obra;
 
-export const crearTareaEventual = (tramite, clave, existentes = []) => {
+export const crearTareaEventual = (tramite, clave, existentes = [], feriados) => {
   const lista = esConsultoria(tramite.tipo_objeto)
     ? EVENTUALES["Consultoría de obra"]
     : EVENTUALES.Obra;
@@ -648,7 +614,7 @@ export const crearTareaEventual = (tramite, clave, existentes = []) => {
     clave: modelo.clave,
     silencioPositivo: Boolean(modelo.silencioPositivo),
     diasSilencio: modelo.dias || 0,
-    fecha_limite: modelo.dias ? (modelo.habiles ? sumarHabiles(hoy(), modelo.dias) : sumarDias(hoy(), modelo.dias)) : "",
+    fecha_limite: modelo.dias ? (modelo.habiles ? sumarHabiles(hoy(), modelo.dias, feriados) : sumarDias(hoy(), modelo.dias)) : "",
   });
 };
 

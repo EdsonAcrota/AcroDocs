@@ -9,9 +9,9 @@ import {
   listarEventuales as listarEventualesCatalogo,
   listarHitosOpcionales as listarHitosOpcionalesCatalogo,
   plantillasPorDefecto,
-  configurarFeriados,
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
+import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
 
 const KEY = "acrodocs_demo_v6";
 const KEYS_ANTERIORES = [];
@@ -20,53 +20,6 @@ const uid = () =>
   (typeof crypto !== "undefined" && crypto.randomUUID)
     ? crypto.randomUUID()
     : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
-
-const hoy = () => {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-};
-
-const FERIADOS = [
-  "2026-01-01", "2026-01-02", "2026-04-02", "2026-04-03", "2026-05-01",
-  "2026-06-07", "2026-06-29", "2026-07-23", "2026-07-28", "2026-07-29",
-  "2026-08-06", "2026-08-30", "2026-10-08", "2026-11-01", "2026-12-08",
-  "2026-12-09", "2026-12-25",
-];
-
-const sumarDias = (fecha, dias) => {
-  if (!fecha) return "";
-  const d = new Date(`${fecha}T12:00:00`);
-  d.setDate(d.getDate() + Number(dias || 0));
-  return d.toISOString().slice(0, 10);
-};
-
-export const esHabil = (fecha, feriados = read().feriados || FERIADOS) => {
-  if (!fecha) return false;
-  const d = new Date(`${fecha}T12:00:00`);
-  const dia = d.getDay();
-  return dia !== 0 && dia !== 6 && !feriados.includes(fecha);
-};
-
-export const sumarHabiles = (fecha, dias, feriados = read().feriados || FERIADOS) => {
-  if (!fecha) return "";
-  let d = new Date(`${fecha}T12:00:00`);
-  let n = Number(dias) || 0;
-  const paso = n >= 0 ? 1 : -1;
-  n = Math.abs(n);
-  while (n > 0) {
-    d.setDate(d.getDate() + paso);
-    const iso = d.toISOString().slice(0, 10);
-    if (esHabil(iso, feriados)) n -= 1;
-  }
-  return d.toISOString().slice(0, 10);
-};
-
-export const diasEntre = (a, b) => {
-  if (!a || !b) return 0;
-  const d1 = new Date(`${a}T12:00:00`);
-  const d2 = new Date(`${b}T12:00:00`);
-  return Math.round((d2 - d1) / 86400000);
-};
 
 const normalizar = (texto) =>
   String(texto || "")
@@ -91,7 +44,7 @@ const seed = () => {
   const data = {
     version: 6,
     session: null,
-    feriados: FERIADOS,
+    feriados: FERIADOS_2026,
     plantillasDocs: plantillasPorDefecto(),
     catalogoHitos: [],
     configFianzas: {},
@@ -132,7 +85,7 @@ const seed = () => {
   };
 
   const obra = marcar(
-    crearTareas(data.tramites[0], data.plantillasDocs, data.catalogoHitos),
+    crearTareas(data.tramites[0], data.plantillasDocs, data.catalogoHitos, data.feriados),
     [
       "1.1.1", "1.1.2", "1.1.4", "1.1.5",
       "1.2.1", "1.2.2", "1.2.3", "1.2.5", "1.2.6", "1.2.7", "1.2.8", "1.2.9",
@@ -147,7 +100,7 @@ const seed = () => {
   if (sinAdelanto) sinAdelanto.estado = "No aplica";
 
   const consultoria = marcar(
-    crearTareas(data.tramites[1], data.plantillasDocs, data.catalogoHitos),
+    crearTareas(data.tramites[1], data.plantillasDocs, data.catalogoHitos, data.feriados),
     [
       "2.1.1", "2.1.2", "2.1.3", "2.1.4", "2.1.5", "2.1.6", "2.1.7",
       "2.2.1", "2.2.2", "2.2.3", "2.2.4", "2.2.5", "2.2.6",
@@ -164,7 +117,8 @@ const seed = () => {
   const cambio = crearTareaEventualCatalogo(
     data.tramites[0],
     "cambio_personal",
-    obra
+    obra,
+    data.feriados
   );
   if (cambio) {
     cambio.estado = "En revisión";
@@ -183,7 +137,7 @@ const migrar = (anterior) => {
   const data = {
     version: 6,
     session: anterior?.session || null,
-    feriados: anterior?.feriados?.length ? anterior.feriados : FERIADOS,
+    feriados: anterior?.feriados?.length ? anterior.feriados : FERIADOS_2026,
     plantillasDocs: anterior?.plantillasDocs || plantillasPorDefecto(),
     catalogoHitos: Array.isArray(anterior?.catalogoHitos) ? anterior.catalogoHitos : [],
     configFianzas: anterior?.configFianzas || {},
@@ -197,7 +151,7 @@ const migrar = (anterior) => {
   for (const t of data.tramites) {
     const previos = itemsViejos.filter((i) => i.tramite_id === t.id);
     const mapa = new Map(previos.map((i) => [normalizar(i.nombre), i]));
-    const nuevas = crearTareas(t, data.plantillasDocs, data.catalogoHitos);
+    const nuevas = crearTareas(t, data.plantillasDocs, data.catalogoHitos, data.feriados);
     for (const tarea of nuevas) {
       const viejo = mapa.get(normalizar(tarea.nombre));
       if (viejo) {
@@ -215,7 +169,7 @@ const migrar = (anterior) => {
     const tramite = data.tramites.find((t) => t.id === amp.tramite_id);
     if (!tramite) continue;
     const existentes = data.items.filter((i) => i.tramite_id === tramite.id);
-    const tarea = crearTareaEventualCatalogo(tramite, "ampliacion", existentes);
+    const tarea = crearTareaEventualCatalogo(tramite, "ampliacion", existentes, data.feriados);
     if (!tarea) continue;
     tarea.nombre = `Ampliación de plazo — ${amp.causal || "sin causal"}`;
     tarea.estado = amp.estado === "Resuelta" ? "Completado" : "En revisión";
@@ -240,11 +194,10 @@ const read = () => {
     if (raw) {
       const data = JSON.parse(raw);
       if (Number(data.version) >= 6) {
-        if (!Array.isArray(data.feriados)) data.feriados = [...FERIADOS];
+        if (!Array.isArray(data.feriados)) data.feriados = [...FERIADOS_2026];
         if (!data.plantillasDocs || typeof data.plantillasDocs !== "object") data.plantillasDocs = plantillasPorDefecto();
         if (!Array.isArray(data.catalogoHitos)) data.catalogoHitos = [];
         if (!data.configFianzas || typeof data.configFianzas !== "object") data.configFianzas = {};
-        configurarFeriados(data.feriados);
         return data;
       }
     }
@@ -252,7 +205,6 @@ const read = () => {
       const anterior = localStorage.getItem(key);
       if (anterior) {
         const data = migrar(JSON.parse(anterior));
-        configurarFeriados(data.feriados);
         localStorage.setItem(KEY, JSON.stringify(data));
         localStorage.removeItem(key);
         return data;
@@ -261,7 +213,6 @@ const read = () => {
   } catch { /* almacenamiento no disponible */ }
   if (memoria) return memoria;
   const data = seed();
-  configurarFeriados(data.feriados);
   memoria = data;
   try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
   return data;
@@ -280,7 +231,6 @@ export const agregarFeriado = (fecha) => {
   if (!fecha) return getFeriados();
   const data = read();
   data.feriados = [...new Set([...(data.feriados || []), fecha])].sort();
-  configurarFeriados(data.feriados);
   write(data);
   return getFeriados();
 };
@@ -288,7 +238,6 @@ export const agregarFeriado = (fecha) => {
 export const eliminarFeriado = (fecha) => {
   const data = read();
   data.feriados = (data.feriados || []).filter((f) => f !== fecha);
-  configurarFeriados(data.feriados);
   write(data);
   return getFeriados();
 };
@@ -351,7 +300,7 @@ export const createTramite = (form) => {
     created_at: hoy(),
   };
   data.tramites.push(t);
-  data.items.push(...crearTareas(t, data.plantillasDocs, data.catalogoHitos));
+  data.items.push(...crearTareas(t, data.plantillasDocs, data.catalogoHitos, data.feriados));
   data.configFianzas[t.id] = { periodo: "anual", tipos: ["fiel_cumplimiento"] };
   write(data);
   return t;
@@ -435,7 +384,7 @@ export const addTareaEventual = (tramiteId, clave) => {
   const tramite = data.tramites.find((t) => t.id === tramiteId);
   if (!tramite) return null;
   const existentes = data.items.filter((i) => i.tramite_id === tramiteId);
-  const tarea = crearTareaEventualCatalogo(tramite, clave, existentes);
+  const tarea = crearTareaEventualCatalogo(tramite, clave, existentes, data.feriados);
   if (!tarea) return null;
   data.items.push(tarea);
   write(data);
@@ -562,7 +511,7 @@ export const addHitoOpcional = (tramiteId, clave) => {
     plazoBase: modelo.base || "inicio",
     plazoHabiles: modelo.habiles !== false,
     fecha_limite: modelo.dias
-      ? (modelo.habiles !== false ? sumarHabiles(fechaBase, modelo.dias) : sumarDias(fechaBase, modelo.dias))
+      ? (modelo.habiles !== false ? sumarHabiles(fechaBase, modelo.dias, data.feriados) : sumarDias(fechaBase, modelo.dias))
       : "",
     norma: modelo.norma || "",
     nota: modelo.nota || "Hito opcional agregado al expediente.",

@@ -4,8 +4,9 @@ import {
   getTramite, updateTramite, listItems, updateItem, addItem, removeItem,
   addTareaEventual, listarEventuales, listarHitosOpcionales, addHitoOpcional,
   agregarMesSCTR, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
-  actualizarCatalogoPorClave, agregarCatalogoHito, moverItem, hoyISO, diasEntre,
+  actualizarCatalogoPorClave, agregarCatalogoHito, moverItem, hoyISO,
 } from "../lib/store.js";
+import { diasEntre } from "../lib/fechas.js";
 import { TIPOS_FIANZA, catalogoDe } from "../lib/catalogo.js";
 import {
   guardarArchivo, descargarArchivo, descargarComoZip, eliminarArchivo, formatearTamano, iconoArchivo,

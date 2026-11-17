@@ -1,8 +1,9 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import {
-  listTramites, listItems, resumenTramite, tareasConPlazo, diasEntre, hoyISO,
+  listTramites, listItems, resumenTramite, tareasConPlazo, hoyISO,
 } from "../lib/store.js";
+import { diasEntre } from "../lib/fechas.js";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
