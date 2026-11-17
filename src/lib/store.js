@@ -1525,6 +1525,7 @@ export const crearMovimientoEn = (data, item, datos) => {
     asientoCO: String(datos.asientoCO || "").trim(),
     cargoId: datos.cargoId || null,
     archivoId: datos.archivoId || null,
+    archivoNombre: datos.archivoNombre || "",
     nota: String(datos.nota || "").trim(),
     usuario: usuario?.nombre || "Sistema",
     usuarioId: usuario?.id || null,
@@ -1584,6 +1585,21 @@ export const flujoDeItem = (itemId) => {
   return flujo ? clonar(flujo) : null;
 };
 
+// La plantilla del catálogo de un hito, si tiene pasos definidos.
+const plantillaConPasosEn = (data, item) => {
+  const tramite = data.tramites.find((t) => t.id === item.tramite_id);
+  const ruta = item.tipo === "eventual" ? `eventual:${item.clave}` : item.tipo === "opcional" ? item.plantilla : item.clavePlantilla;
+  const ubicada = ubicarPlantillas(data.catalogo, ruta).find((u) => u.ambito === ambitoDe(tramite?.tipo_objeto));
+  return ubicada && (ubicada.plantilla.pasos || []).length ? ubicada : null;
+};
+
+// Para mostrar "Activar seguimiento por pasos" solo donde el catálogo lo permite.
+export const pasosDisponibles = (itemId) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === itemId);
+  return Boolean(item && !item.pasos?.length && item.estado !== "Completado" && plantillaConPasosEn(data, item));
+};
+
 // Copia a un hito existente los pasos que su plantilla tiene hoy en el catálogo.
 export const activarPasos = (itemId) => {
   const data = read();
@@ -1591,10 +1607,8 @@ export const activarPasos = (itemId) => {
   exigirEn(data, "estado", item.tramite_id);
   if (item.pasos?.length) throw new Error("Este hito ya tiene seguimiento por pasos.");
   if (item.estado === "Completado") throw new Error("Un hito completado no puede pasar a seguimiento por pasos.");
-  const tramite = data.tramites.find((t) => t.id === item.tramite_id);
-  const ruta = item.tipo === "eventual" ? `eventual:${item.clave}` : item.tipo === "opcional" ? item.plantilla : item.clavePlantilla;
-  const ubicada = ubicarPlantillas(data.catalogo, ruta).find((u) => u.ambito === ambitoDe(tramite?.tipo_objeto));
-  if (!ubicada || !(ubicada.plantilla.pasos || []).length) throw new Error("Este hito no tiene pasos definidos en el catálogo.");
+  const ubicada = plantillaConPasosEn(data, item);
+  if (!ubicada) throw new Error("Este hito no tiene pasos definidos en el catálogo.");
   item.pasos = instanciarPasos(ubicada.plantilla.pasos, item.tipo === "eventual" ? "" : item.fecha_limite);
   item.plazoLevantamiento = ubicada.plantilla.plazoLevantamiento || null;
   sincronizarItemEn(data, item);

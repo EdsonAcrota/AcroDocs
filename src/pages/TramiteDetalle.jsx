@@ -15,6 +15,7 @@ import {
 } from "../lib/archivos.js";
 import HistorialLista from "../components/HistorialLista.jsx";
 import EjecutorForm from "../components/EjecutorForm.jsx";
+import LineaTiempo from "../components/LineaTiempo.jsx";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -89,7 +90,7 @@ export default function TramiteDetalle() {
   // actúa en los suyos). Se calcula una vez por contrato: leer el almacén es caro.
   const permiso = useMemo(
     () => Object.fromEntries(
-      ["editar", "eliminar", "agregar", "estado", "plazos", "borrar_hito", "subir", "reemplazar", "borrar_doc", "descargar", "catalogo"]
+      ["editar", "eliminar", "agregar", "estado", "plazos", "borrar_hito", "subir", "reemplazar", "borrar_doc", "descargar", "catalogo", "registrar", "corregir"]
         .map((clave) => [clave, puede(clave, id)])
     ),
     [id]
@@ -284,7 +285,12 @@ export default function TramiteDetalle() {
 
   const cambiarItem = (cambios) => {
     if (!tarea) return;
-    updateItem(tarea.id, cambios);
+    try {
+      updateItem(tarea.id, cambios);
+      setErrorArchivo("");
+    } catch (error) {
+      setErrorArchivo(error?.message || "No se pudo guardar el cambio.");
+    }
     recargar();
   };
 
@@ -585,7 +591,8 @@ export default function TramiteDetalle() {
       }
       // Dar el hito por cumplido es cambiar su estado: solo con el permiso `estado`.
       const cumple = Boolean(tipoDoc && tarea.docCumplimiento && tipoDoc === tarea.docCumplimiento);
-      if (cumple && permiso.estado) {
+      // En un hito con pasos el estado lo marcan los pasos, no un archivo.
+      if (cumple && permiso.estado && !tarea.pasos?.length) {
         updateItem(tarea.id, { estado: "Completado", fecha: tarea.fecha || hoyISO() });
       }
       recargar();
@@ -1142,6 +1149,8 @@ export default function TramiteDetalle() {
                 </div>
               </div>
 
+              <LineaTiempo item={tarea} permiso={permiso} onCambio={recargar} />
+
               <div className="catalogo-hito">
                 <div className="catalogo-hito-cab">
                   <div>
@@ -1169,12 +1178,25 @@ export default function TramiteDetalle() {
               </div>
 
               <div className="grid-form">
-                <label className="campo-grupo">
-                  <span className="campo">Estado del hito</span>
-                  <select disabled={!permiso.estado} value={tarea.estado || "Pendiente"} onChange={(e) => cambiarItem({ estado: e.target.value })}>
-                    {ESTADOS.map((e) => <option key={e}>{e}</option>)}
-                  </select>
-                </label>
+                {tarea.pasos?.length ? (
+                  <div className="campo-grupo">
+                    <span className="campo">Estado del hito</span>
+                    <div className="chips">
+                      <span className="badge azul">{tarea.estado}</span>
+                      {permiso.estado && (tarea.estado === "No aplica"
+                        ? <button type="button" className="btn mini" onClick={() => cambiarItem({ estado: "Pendiente" })}>Reabrir</button>
+                        : <button type="button" className="btn mini" onClick={() => cambiarItem({ estado: "No aplica" })}>Marcar como No aplica</button>)}
+                    </div>
+                    <span className="ref">Lo determinan los pasos del trámite.</span>
+                  </div>
+                ) : (
+                  <label className="campo-grupo">
+                    <span className="campo">Estado del hito</span>
+                    <select disabled={!permiso.estado} value={tarea.estado || "Pendiente"} onChange={(e) => cambiarItem({ estado: e.target.value })}>
+                      {ESTADOS.map((e) => <option key={e}>{e}</option>)}
+                    </select>
+                  </label>
+                )}
                 <label className="campo-grupo">
                   <span className="campo">Responsable</span>
                   <input disabled={!permiso.estado} value={tarea.responsable || ""} onChange={(e) => cambiarItem({ responsable: e.target.value })} placeholder="Área o persona responsable" />
@@ -1185,7 +1207,7 @@ export default function TramiteDetalle() {
                 </label>
                 <label className="campo-grupo">
                   <span className="campo">Fecha límite</span>
-                  <input disabled={!permiso.plazos} type="date" value={tarea.fecha_limite || ""} onChange={(e) => cambiarItem({ fecha_limite: e.target.value })} />
+                  <input disabled={!permiso.plazos || Boolean(tarea.pasos?.length)} type="date" value={tarea.fecha_limite || ""} onChange={(e) => cambiarItem({ fecha_limite: e.target.value })} />
                 </label>
                 <label className="campo-grupo ancho-completo">
                   <span className="campo">Observación / sustento</span>
@@ -1310,7 +1332,7 @@ export default function TramiteDetalle() {
                 </button>
               )}
               <button type="button" className="btn" onClick={() => setTareaId(null)}>Cerrar</button>
-              {permiso.estado && tarea.estado === "Completado" ? (
+              {tarea.pasos?.length ? null : permiso.estado && tarea.estado === "Completado" ? (
                 <button
                   type="button"
                   className="btn"
