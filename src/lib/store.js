@@ -1641,3 +1641,84 @@ export const registrarSilencio = (itemId) => {
   write(data);
   return clonar(movimiento);
 };
+
+// ---------- Alertas del Panel (§5.6) ----------
+// Se calculan al momento, solo para los roles con `alertas` y sobre los contratos
+// que el usuario ve. Cuatro grupos:
+//   te_toca            paso del contratista que vence pronto o ya venció
+//   otra_parte         paso de la supervisión o la entidad vencido sin respuesta
+//   sin_pasos          hitos con una sola fecha límite (comportamiento anterior)
+//   plazo_sin_definir  pasos de la otra parte sin plazo (solo quien edita el catálogo)
+const ORDEN_GRUPOS = ["te_toca", "otra_parte", "sin_pasos", "plazo_sin_definir"];
+const NOMBRE_PARTE = { supervision: "Supervisión", entidad: "Entidad" };
+
+const textoDias = (dias) => (dias === 0 ? "vence hoy" : dias > 0 ? `vence en ${dias} día(s)` : `venció hace ${Math.abs(dias)} día(s)`);
+const fechaCorta = (iso) => {
+  const [anio, mes, dia] = String(iso).split("-");
+  return `${dia}/${mes}/${anio}`;
+};
+
+export const alertasPanel = (hoyIso = hoy()) => {
+  const data = read();
+  if (!puedeEn(data, "alertas")) return [];
+  const usuario = usuarioActual(data);
+  const veCatalogo = puedeEn(data, "catalogo");
+  const tramites = new Map(data.tramites.map((t) => [t.id, t]));
+  const alertas = [];
+  let sinPlazoDefinir = 0;
+
+  for (const item of data.items) {
+    if (item.estado === "Completado" || item.estado === "No aplica") continue;
+    const tramite = tramites.get(item.tramite_id);
+    if (!tramite || !veContrato(data.permisosRoles, usuario, tramite.id)) continue;
+    const prefijo = `${tramite.codigo} · ${item.codigo} ${item.nombre}`;
+    const url = `/tramite/${tramite.id}?tarea=${item.id}`;
+
+    if (!item.pasos?.length) {
+      if (!item.fecha_limite) continue;
+      const dias = diasEntre(hoyIso, item.fecha_limite);
+      if (dias < 0) {
+        const silencio = item.silencioPositivo ? "Posible silencio positivo: " : "";
+        alertas.push({ grupo: "sin_pasos", nivel: "rojo", dias, url, texto: `${silencio}${prefijo}: plazo vencido hace ${Math.abs(dias)} día(s).` });
+      } else if (dias <= 7) {
+        alertas.push({ grupo: "sin_pasos", nivel: "ambar", dias, url, texto: `${prefijo}: ${textoDias(dias)}.` });
+      }
+      continue;
+    }
+
+    const flujo = calcularFlujo(item, (data.movimientos || []).filter((m) => m.itemId === item.id), { feriados: data.feriados, hoy: hoyIso });
+    if (flujo.actual < 0) continue;
+    const paso = flujo.pasos[flujo.actual];
+    const limite = flujo.observado ? flujo.levantamientoLimite : paso.fechaLimite;
+    const aCargoContratista = flujo.observado || paso.responsable === "contratista";
+
+    if (!aCargoContratista && Number(paso.plazoDias) === 0) sinPlazoDefinir += 1;
+    if (!limite) continue;
+    const dias = diasEntre(hoyIso, limite);
+
+    if (aCargoContratista) {
+      const ventana = Math.max(0, ...(paso.alertas?.length ? paso.alertas : [5]));
+      if (dias <= ventana) {
+        const texto = flujo.observado ? `Levantar observaciones de «${paso.nombre}»` : paso.nombre;
+        alertas.push({ grupo: "te_toca", nivel: dias < 0 ? "rojo" : "ambar", dias, url, texto: `${prefijo}: ${texto} ${textoDias(dias)}.` });
+      }
+    } else if (dias < 0) {
+      const texto = flujo.silencioVencido
+        ? `Posible aprobación por silencio: la entidad no se pronunció; plazo vencido el ${fechaCorta(limite)} (hace ${Math.abs(dias)} días).`
+        : `${NOMBRE_PARTE[paso.responsable]} sin respuesta: ${paso.nombre} venció hace ${Math.abs(dias)} día(s).`;
+      alertas.push({ grupo: "otra_parte", nivel: "rojo", dias, url, texto: `${prefijo}: ${texto}` });
+    }
+  }
+
+  if (veCatalogo && sinPlazoDefinir > 0) {
+    alertas.push({
+      grupo: "plazo_sin_definir",
+      nivel: "ambar",
+      dias: 0,
+      url: "/catalogo",
+      texto: `${sinPlazoDefinir} paso(s) de la supervisión o la entidad no tienen plazo definido y no generan alerta. Defínelos en el catálogo.`,
+    });
+  }
+
+  return alertas.sort((a, b) => ORDEN_GRUPOS.indexOf(a.grupo) - ORDEN_GRUPOS.indexOf(b.grupo) || a.dias - b.dias);
+};

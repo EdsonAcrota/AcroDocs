@@ -1661,3 +1661,28 @@ describe("seguimiento por pasos", () => {
     expect(store.flujoDeItem(valorizacion.id).actual).toBe(0);
   });
 });
+
+describe("alertas del Panel", () => {
+  it("agrupa lo que le toca al contratista y lo que la otra parte debe, y solo las ve quien tiene el permiso", () => {
+    entrar("gerente");
+    const propia = store.addTareaEventual("t-001", "ampliacion");
+    store.registrarMovimiento(propia.id, { pasoClave: "fin_causal", tipo: "asiento", fecha: "2026-11-05" });
+
+    const ajena = store.addTareaEventual("t-001", "ampliacion");
+    store.updateItem(ajena.id, {
+      pasos: ajena.pasos.map((p) => (p.clave === "pronunciamiento_entidad" ? { ...p, plazoDias: 10 } : p)),
+    });
+    store.registrarMovimiento(ajena.id, { pasoClave: "fin_causal", tipo: "asiento", fecha: "2026-09-01" });
+    store.registrarMovimiento(ajena.id, { pasoClave: "solicitud", tipo: "presentado", fecha: "2026-09-10" });
+    store.registrarMovimiento(ajena.id, { pasoClave: "informe_supervision", tipo: "conformidad", fecha: "2026-09-15" });
+
+    const alertas = store.alertasPanel("2026-11-17");
+    expect(alertas.some((a) => a.grupo === "te_toca" && a.texto.includes("Presentar la solicitud de ampliación vence en 2 día(s)"))).toBe(true);
+    expect(alertas.some((a) => a.grupo === "otra_parte" && a.texto.includes("Posible aprobación por silencio") && a.texto.includes("29/09/2026"))).toBe(true);
+    // Los grupos salen en orden: primero lo que toca al contratista.
+    expect(alertas.findIndex((a) => a.grupo === "te_toca")).toBeLessThan(alertas.findIndex((a) => a.grupo === "otra_parte"));
+
+    entrar("consulta");
+    expect(store.alertasPanel("2026-11-17")).toEqual([]);
+  });
+});

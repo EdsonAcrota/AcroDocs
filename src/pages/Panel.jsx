@@ -1,7 +1,7 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import {
-  listTramites, listItems, resumenTramite, tareasConPlazo, hoyISO, puede, nombreEjecutor,
+  listTramites, listItems, resumenTramite, alertasPanel, hoyISO, puede, nombreEjecutor,
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
 
@@ -21,35 +21,21 @@ export default function Panel() {
     0
   );
 
-  const alertas = [];
-  for (const t of verAlertas ? tareasConPlazo() : []) {
-    const dias = diasEntre(hoyISO(), t.fecha_limite);
-    const silencio = t.silencioPositivo && dias < 0;
-    if (dias < 0) {
-      alertas.push({
-        tipo: "rojo",
-        texto: `${silencio ? "Posible silencio positivo: " : ""}${t.tramite_codigo} · ${t.codigo} ${t.nombre}: plazo vencido hace ${Math.abs(dias)} día(s).`,
-        url: `/tramite/${t.tramite_id}?tarea=${t.id}`,
-      });
-    } else if (dias <= 7) {
-      alertas.push({
-        tipo: "ambar",
-        texto: `${t.tramite_codigo} · ${t.codigo} ${t.nombre}: vence ${dias === 0 ? "hoy" : `en ${dias} día(s)`}.`,
-        url: `/tramite/${t.tramite_id}?tarea=${t.id}`,
-      });
-    }
-  }
-
+  // Las alertas ya vienen calculadas, agrupadas y ordenadas por el store (§5.6).
+  const alertas = verAlertas ? alertasPanel() : [];
   for (const t of verAlertas ? tramites : []) {
     const dias = t.fecha_fin ? diasEntre(hoyISO(), t.fecha_fin) : null;
     if (dias !== null && dias >= 0 && dias <= 30) {
-      alertas.push({
-        tipo: "ambar",
-        texto: `Ejecución de ${t.codigo} termina en ${dias} día(s).`,
-        url: `/tramite/${t.id}`,
-      });
+      alertas.push({ grupo: "contrato", nivel: "ambar", texto: `Ejecución de ${t.codigo} termina en ${dias} día(s).`, url: `/tramite/${t.id}` });
     }
   }
+  const GRUPOS = [
+    ["te_toca", "Te toca"],
+    ["otra_parte", "Plazo vencido de la otra parte"],
+    ["sin_pasos", "Otros hitos"],
+    ["plazo_sin_definir", "Plazos por definir"],
+    ["contrato", "Contratos por terminar"],
+  ];
 
   const recientes = tramites.slice(0, 5);
 
@@ -102,14 +88,23 @@ export default function Panel() {
           </div>
           <div className="cuerpo">
             {alertas.length === 0 && <div className="vacio">No hay plazos próximos ni vencidos.</div>}
-            {alertas.slice(0, 10).map((a, i) => (
-              <div key={i} className={`alerta-item ${a.tipo}`}>
-                <span className="punto" />
-                <div>{a.texto}</div>
-                <Link className="btn mini" to={a.url}>Abrir</Link>
-              </div>
-            ))}
-            {alertas.length > 10 && <div className="ref">Hay {alertas.length - 10} alerta(s) más en los expedientes.</div>}
+            {GRUPOS.map(([grupo, titulo]) => {
+              const lista = alertas.filter((a) => a.grupo === grupo);
+              if (lista.length === 0) return null;
+              return (
+                <div key={grupo}>
+                  <div className="ref" style={{ margin: "10px 0 2px", fontWeight: 600 }}>{titulo} · {lista.length}</div>
+                  {lista.slice(0, 6).map((a, i) => (
+                    <div key={i} className={`alerta-item ${a.nivel}`}>
+                      <span className="punto" />
+                      <div>{a.texto}</div>
+                      <Link className="btn mini" to={a.url}>Abrir</Link>
+                    </div>
+                  ))}
+                  {lista.length > 6 && <div className="ref">Hay {lista.length - 6} más en esta categoría.</div>}
+                </div>
+              );
+            })}
           </div>
         </div>
         )}
