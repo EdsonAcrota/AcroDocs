@@ -16,6 +16,7 @@ import {
 import HistorialLista from "../components/HistorialLista.jsx";
 import EjecutorForm from "../components/EjecutorForm.jsx";
 import LineaTiempo from "../components/LineaTiempo.jsx";
+import CargosPanel from "../components/CargosPanel.jsx";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -851,8 +852,11 @@ export default function TramiteDetalle() {
           Expediente <span className="tab-num">{items.length}</span>
         </button>
         <button className={tab === "resumen" ? "activo" : ""} onClick={() => setTab("resumen")}>Resumen</button>
+        <button className={tab === "cargos" ? "activo" : ""} onClick={() => setTab("cargos")}>Cargos</button>
         <button className={tab === "historial" ? "activo" : ""} onClick={() => setTab("historial")}>Historial</button>
       </div>
+
+      {tab === "cargos" && <CargosPanel tramiteId={id} />}
 
       {tab === "historial" && (
         <div className="tarjeta">

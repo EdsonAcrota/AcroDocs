@@ -116,8 +116,8 @@ export const descargarArchivo = async (id, nombreSugerido) => {
   descargarBlob(registro.blob, nombreSugerido || registro.nombre || "documento");
 };
 
-export const descargarTexto = (texto, nombre) => {
-  descargarBlob(new Blob([texto], { type: "application/json;charset=utf-8" }), nombre);
+export const descargarTexto = (texto, nombre, tipo = "application/json;charset=utf-8") => {
+  descargarBlob(new Blob([texto], { type: tipo }), nombre);
 };
 
 // ZIP mínimo sin compresión. Evita depender de librerías externas y, sobre
