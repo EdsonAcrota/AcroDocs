@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from "react";
 import { Routes, Route, Navigate, NavLink, useNavigate } from "react-router-dom";
-import { getSession, logout } from "./lib/store.js";
+import { getSession, logout, puede } from "./lib/store.js";
 import { hasSupabase } from "./lib/supabase.js";
 import Login from "./pages/Login.jsx";
 import Panel from "./pages/Panel.jsx";
@@ -25,6 +25,8 @@ export default function App() {
 
   const rolTxt = { admin: "Administrador", logistica: "Logística", area_usuaria: "Área usuaria", legal: "Asesoría Legal", lectura: "Solo lectura" };
   const inicial = (session.nombre || "U").slice(0, 1).toUpperCase();
+  // Configuración se muestra a quien tenga permiso sobre alguna de sus secciones.
+  const verConfiguracion = ["usuarios", "feriados", "respaldo", "catalogo"].some((permiso) => puede(permiso));
 
   return (
     <div className="app">
@@ -43,7 +45,7 @@ export default function App() {
           <NavLink to="/tramites" className={({ isActive }) => (isActive ? "activo" : "")}>
             <span className="nav-ico" aria-hidden="true" /> Contratos
           </NavLink>
-          {session.rol === "admin" && (
+          {verConfiguracion && (
             <NavLink to="/configuracion" className={({ isActive }) => (isActive ? "activo" : "")}>
               <span className="nav-ico" aria-hidden="true" /> Configuración
             </NavLink>

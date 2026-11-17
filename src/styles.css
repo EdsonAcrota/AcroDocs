@@ -495,6 +495,43 @@ input[readonly] { background: #f2f4f1; color: var(--muted); }
 .feriado-fila strong { display: block; font-size: 12px; color: var(--ink); text-transform: capitalize; }
 .feriado-fila .ref { font-size: 10.5px; }
 
+/* ---------- Usuarios y permisos ---------- */
+.seccion-config { margin: 6px 0 12px; }
+.seccion-config h3 { margin: 0; font-size: 17px; }
+.seccion-config p { margin: 3px 0 0; color: var(--muted); font-size: 12.5px; }
+.usuario-form { border: 1px solid var(--line); border-left: 3px solid var(--blue); border-radius: var(--radius); background: var(--sheet-2); padding: 14px 14px 4px; margin-bottom: 16px; }
+.usuario-form-titulo { margin-bottom: 10px; font-size: 13px; color: var(--ink); }
+.usuario-nota { font-weight: 400; }
+.usuario-yo { margin-left: 6px; vertical-align: middle; }
+.tabla-usuarios tr.usuario-inactivo td { color: var(--muted); }
+.tabla-usuarios td strong { font-size: 12.5px; color: inherit; }
+.texto-peligro { color: var(--red); font-weight: 700; }
+.matriz-leyenda { margin-bottom: 12px; font-size: 11.5px; line-height: 1.5; }
+.matriz-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); }
+.matriz { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 12px; }
+.matriz th, .matriz td { padding: 0; text-align: center; background: var(--sheet); border-right: 1px solid var(--line-soft); border-bottom: 1px solid var(--line-soft); }
+.matriz thead th { background: var(--sheet-2); color: var(--ink-2); font-weight: 600; border-bottom: 1px solid var(--line); }
+.matriz tbody tr:last-child th, .matriz tbody tr:last-child td { border-bottom: 0; }
+.matriz .grupo-col { padding: 7px 6px; font-size: 10.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--muted); border-left: 1px solid var(--line); }
+.matriz .rol-col { position: sticky; left: 0; z-index: 1; min-width: 210px; padding: 8px 12px; text-align: left; font-weight: 400; background: var(--sheet); border-right: 1px solid var(--line); }
+.matriz thead .rol-col { z-index: 2; background: var(--sheet-2); font-weight: 600; vertical-align: bottom; }
+.matriz .rol-col strong { font-size: 12.5px; color: var(--ink); }
+.matriz .permiso-col { width: 36px; min-width: 36px; height: 205px; padding: 8px 2px; vertical-align: bottom; font-size: 11px; cursor: help; }
+.matriz .permiso-col span { display: inline-block; max-height: 191px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; writing-mode: vertical-rl; transform: rotate(180deg); }
+.matriz .permiso-col.peligroso { color: var(--red); background: var(--red-wash); }
+.matriz td.celda { width: 36px; min-width: 36px; height: 46px; }
+.matriz td.celda.peligroso { background: var(--red-wash); }
+.matriz td.celda input { width: 16px; height: 16px; margin: 0; padding: 0; vertical-align: middle; cursor: pointer; accent-color: var(--blue); }
+.matriz td.celda input.peligro { accent-color: var(--red); }
+.matriz td.celda input:disabled { cursor: not-allowed; opacity: .55; }
+.matriz tr.fila-bloqueada .rol-col, .matriz tr.fila-bloqueada td.celda { background: var(--sheet-2); }
+.matriz tr.fila-bloqueada td.celda.peligroso { background: var(--red-wash); }
+@media (max-width: 560px) {
+  /* la regla general oculta las columnas 4 y 5 de cualquier tabla; esta no */
+  .tabla.tabla-usuarios th:nth-child(4), .tabla.tabla-usuarios td:nth-child(4),
+  .tabla.tabla-usuarios th:nth-child(5), .tabla.tabla-usuarios td:nth-child(5) { display: table-cell; }
+}
+
 /* ---------- Impresión ---------- */
 .solo-print { display: none; }
 @media print {

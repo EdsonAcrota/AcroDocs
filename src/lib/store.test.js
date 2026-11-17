@@ -396,3 +396,382 @@ describe("migración desde v6", () => {
     expect(localStorage.getItem("acrodocs_demo_v6")).toBeNull();
   });
 });
+
+describe("inicio de sesión con contraseña vacía", () => {
+  it("loginDemo rechaza a un usuario cuya contraseña guardada está vacía", () => {
+    store.listTramites();
+    const data = leerV7();
+    data.usuarios.find((u) => u.rol === "legal").password = "";
+    escribirV7(data);
+    expect(store.loginDemo(CLAVES.legal[0], "").error).toBeTruthy();
+    expect(store.loginDemo(CLAVES.legal[0], "   ").error).toBeTruthy();
+    expect(store.getSession()).toBeNull();
+  });
+});
+
+describe("gestión de usuarios", () => {
+  const MENSAJE_GERENTE = "La cuenta del gerente general no se puede modificar.";
+  const MENSAJE_ULTIMO = "Debe haber al menos un gerente general activo.";
+  const MENSAJE_PERMISO = "No tienes permiso para esta acción.";
+  const MENSAJE_ASIGNAR = "Solo un gerente general puede asignar el rol de gerente general.";
+  const exacto = (fn, mensaje) => expect(fn).toThrow(new Error(mensaje));
+
+  const idDe = (rol) => leerV7().usuarios.find((u) => u.rol === rol).id;
+  const nuevo = (extra = {}) => ({
+    nombre: "Marta Quispe",
+    email: "marta@acrodocs.local",
+    password: "marta123",
+    rol: "asis_adm",
+    contratos: [],
+    ...extra,
+  });
+
+  it("listarUsuarios exige el permiso usuarios y no expone contraseñas", () => {
+    entrar("jefe");
+    exacto(() => store.listarUsuarios(), MENSAJE_PERMISO);
+    store.logout();
+    entrar("socio");
+    const lista = store.listarUsuarios();
+    expect(lista).toHaveLength(9);
+    expect(lista.every((u) => u.password === undefined)).toBe(true);
+    expect(lista.find((u) => u.rol === "residente").contratos).toEqual(["t-001"]);
+    // es una copia: modificarla no altera los datos
+    lista[0].nombre = "X";
+    lista.find((u) => u.rol === "residente").contratos.push("t-002");
+    expect(store.listarUsuarios().find((u) => u.rol === "residente").contratos).toEqual(["t-001"]);
+    expect(store.listarUsuarios()[0].nombre).not.toBe("X");
+  });
+
+  it("sin sesión no se puede listar, crear ni actualizar", () => {
+    exacto(() => store.listarUsuarios(), MENSAJE_PERMISO);
+    exacto(() => store.crearUsuario(nuevo()), MENSAJE_PERMISO);
+    exacto(() => store.actualizarUsuario("u-socio", { nombre: "X" }), MENSAJE_PERMISO);
+  });
+
+  it("un rol sin el permiso usuarios no puede crear ni actualizar", () => {
+    entrar("asis_adm");
+    exacto(() => store.crearUsuario(nuevo()), MENSAJE_PERMISO);
+    exacto(() => store.actualizarUsuario(idDe("consulta"), { activo: false }), MENSAJE_PERMISO);
+    expect(leerV7().usuarios).toHaveLength(9);
+    expect(leerV7().historial).toEqual([]);
+  });
+
+  it("crearUsuario agrega al usuario, puede entrar y queda en historial sin la contraseña", () => {
+    entrar("socio");
+    const creado = store.crearUsuario(
+      nuevo({ nombre: "  Marta Quispe ", email: "  Marta@AcroDocs.local ", contratos: ["t-002", "t-002", "no-existe"] })
+    );
+    expect(creado).toMatchObject({
+      nombre: "Marta Quispe",
+      email: "marta@acrodocs.local",
+      rol: "asis_adm",
+      contratos: ["t-002"],
+      activo: true,
+    });
+    expect(typeof creado.id).toBe("string");
+    expect(creado.password).toBeUndefined();
+    expect(store.listarUsuarios()).toHaveLength(10);
+
+    const [registro] = store.listarHistorial();
+    expect(registro).toMatchObject({ accion: "crear", objeto: "usuarios", objetoId: creado.id });
+    expect(registro.detalle).toContain("Marta Quispe");
+    expect(registro.detalle).not.toContain("marta123");
+
+    store.logout();
+    const res = store.loginDemo("marta@acrodocs.local", "marta123");
+    expect(res.error).toBeUndefined();
+    expect(res.session).toMatchObject({ rol: "asis_adm", contratos: ["t-002"] });
+  });
+
+  it("crearUsuario con email repetido lanza error", () => {
+    entrar("socio");
+    expect(() => store.crearUsuario(nuevo({ email: "legal@acrodocs.local" }))).toThrow("Ya existe un usuario con ese correo.");
+    expect(() => store.crearUsuario(nuevo({ email: " LEGAL@acrodocs.local " }))).toThrow("Ya existe un usuario con ese correo.");
+    store.crearUsuario(nuevo());
+    expect(() => store.crearUsuario(nuevo())).toThrow("Ya existe un usuario con ese correo.");
+    expect(store.listarUsuarios()).toHaveLength(10);
+  });
+
+  it("crearUsuario valida los datos obligatorios y no deja rastro si falla", () => {
+    entrar("socio");
+    expect(() => store.crearUsuario(nuevo({ nombre: "   " }))).toThrow("El nombre es obligatorio.");
+    expect(() => store.crearUsuario(nuevo({ email: "no-es-correo" }))).toThrow("Escribe un correo válido.");
+    expect(() => store.crearUsuario(nuevo({ email: "" }))).toThrow("Escribe un correo válido.");
+    expect(() => store.crearUsuario(nuevo({ password: "" }))).toThrow("La contraseña es obligatoria.");
+    expect(() => store.crearUsuario(nuevo({ password: "   " }))).toThrow("La contraseña es obligatoria.");
+    expect(() => store.crearUsuario(nuevo({ password: undefined }))).toThrow("La contraseña es obligatoria.");
+    expect(() => store.crearUsuario(nuevo({ rol: "inventado" }))).toThrow("Elige un rol válido.");
+    expect(store.listarUsuarios()).toHaveLength(9);
+    expect(store.listarHistorial()).toEqual([]);
+  });
+
+  it("solo un gerente puede crear a otro gerente", () => {
+    entrar("socio");
+    exacto(() => store.crearUsuario(nuevo({ rol: "gerente" })), MENSAJE_ASIGNAR);
+    expect(store.listarUsuarios()).toHaveLength(9);
+    store.logout();
+    entrar("gerente");
+    expect(store.crearUsuario(nuevo({ rol: "gerente" })).rol).toBe("gerente");
+  });
+
+  it("no se puede editar ni desactivar a un gerente", () => {
+    entrar("socio");
+    const idGerente = idDe("gerente");
+    exacto(() => store.actualizarUsuario(idGerente, { activo: false }), MENSAJE_GERENTE);
+    exacto(() => store.actualizarUsuario(idGerente, { rol: "socio" }), MENSAJE_GERENTE);
+    exacto(() => store.actualizarUsuario(idGerente, { nombre: "Otro nombre" }), MENSAJE_GERENTE);
+    exacto(() => store.actualizarUsuario(idGerente, { password: "nueva123" }), MENSAJE_GERENTE);
+    exacto(() => store.actualizarUsuario(idGerente, {}), MENSAJE_GERENTE);
+    expect(leerV7().usuarios.find((u) => u.id === idGerente)).toMatchObject({
+      rol: "gerente", activo: true, nombre: "Gerente General", password: "gerente123",
+    });
+    expect(leerV7().historial).toEqual([]);
+  });
+
+  it("un rol con el permiso usuarios tampoco puede tocar a un gerente", () => {
+    entrar("socio");
+    store.setPermisoRol("jefe", "usuarios", true);
+    store.logout();
+    entrar("jefe");
+    exacto(() => store.actualizarUsuario(idDe("gerente"), { activo: false }), MENSAJE_GERENTE);
+  });
+
+  it("solo un gerente puede asignar el rol de gerente a otra cuenta", () => {
+    entrar("socio");
+    exacto(() => store.actualizarUsuario(idDe("consulta"), { rol: "gerente" }), MENSAJE_ASIGNAR);
+    expect(leerV7().usuarios.find((u) => u.id === idDe("consulta")).rol).toBe("consulta");
+    store.logout();
+    entrar("gerente");
+    expect(store.actualizarUsuario(idDe("consulta"), { rol: "gerente" }).rol).toBe("gerente");
+  });
+
+  it("nunca puede quedar sin ningún gerente activo", () => {
+    entrar("gerente");
+    const g1 = idDe("gerente");
+    exacto(() => store.actualizarUsuario(g1, { activo: false }), MENSAJE_ULTIMO);
+    exacto(() => store.actualizarUsuario(g1, { rol: "socio" }), MENSAJE_ULTIMO);
+    expect(leerV7().usuarios.find((u) => u.id === g1)).toMatchObject({ rol: "gerente", activo: true });
+
+    // con un segundo gerente se puede desactivar uno, pero no el último que queda
+    const g2 = store.crearUsuario(nuevo({ rol: "gerente" })).id;
+    store.actualizarUsuario(g2, { activo: false });
+    exacto(() => store.actualizarUsuario(g1, { activo: false }), MENSAJE_ULTIMO);
+    exacto(() => store.actualizarUsuario(g1, { rol: "jefe" }), MENSAJE_ULTIMO);
+
+    // reactivado el segundo, el primero ya puede dejar de serlo
+    store.actualizarUsuario(g2, { activo: true });
+    expect(store.actualizarUsuario(g1, { rol: "jefe" }).rol).toBe("jefe");
+  });
+
+  it("un gerente puede editar sus propios datos y los de otro gerente", () => {
+    entrar("gerente");
+    const g1 = idDe("gerente");
+    expect(store.actualizarUsuario(g1, { nombre: "Gerente Principal" }).nombre).toBe("Gerente Principal");
+    const g2 = store.crearUsuario(nuevo({ rol: "gerente" })).id;
+    expect(store.actualizarUsuario(g2, { nombre: "Segunda gerente" }).nombre).toBe("Segunda gerente");
+    expect(store.getSession().nombre).toBe("Gerente Principal");
+  });
+
+  it("el cambio y su registro se guardan juntos aunque el usuario se desactive a sí mismo", () => {
+    entrar("gerente");
+    const g1 = idDe("gerente");
+    store.crearUsuario(nuevo({ rol: "gerente" }));
+    store.actualizarUsuario(g1, { activo: false });
+    const ultimo = leerV7().historial.at(-1);
+    expect(ultimo).toMatchObject({ accion: "editar", objeto: "usuarios", objetoId: g1, usuarioId: g1, usuario: "Gerente General" });
+    expect(store.getSession()).toBeNull();
+  });
+
+  it("actualizarUsuario cambia rol, contratos y estado, y se refleja al instante", () => {
+    entrar("socio");
+    const idResidente = idDe("residente");
+    const actualizado = store.actualizarUsuario(idResidente, { contratos: ["t-002", "t-002", "x"], activo: true });
+    expect(actualizado.contratos).toEqual(["t-002"]);
+    store.logout();
+    entrar("residente");
+    expect(store.listTramites().map((t) => t.id)).toEqual(["t-002"]);
+    store.logout();
+
+    entrar("socio");
+    store.actualizarUsuario(idResidente, { rol: "consulta" });
+    store.logout();
+    entrar("residente");
+    expect(store.getSession().rol).toBe("consulta");
+    expect(store.puede("subir")).toBe(false);
+    expect(store.listTramites()).toHaveLength(2);
+    store.logout();
+
+    entrar("socio");
+    store.actualizarUsuario(idResidente, { activo: false });
+    store.logout();
+    expect(store.loginDemo(...CLAVES.residente).error).toBeTruthy();
+    entrar("socio");
+    store.actualizarUsuario(idResidente, { activo: true });
+    store.logout();
+    entrar("residente");
+  });
+
+  it("actualizarUsuario registra cada cambio en el historial sin guardar la contraseña", () => {
+    entrar("socio");
+    const id = idDe("legal");
+    store.actualizarUsuario(id, { nombre: "Asesora Legal", password: "secreta-9", rol: "finanzas", activo: false });
+    const [registro] = store.listarHistorial();
+    expect(registro).toMatchObject({ accion: "editar", objeto: "usuarios", objetoId: id });
+    expect(registro.detalle).toContain("Asesora Legal");
+    expect(registro.detalle).not.toContain("secreta-9");
+    expect(registro.detalle).not.toContain("legal123");
+    store.actualizarUsuario(id, { activo: true });
+    expect(store.loginDemo(CLAVES.legal[0], "secreta-9").session.rol).toBe("finanzas");
+    expect(store.loginDemo(CLAVES.legal[0], "legal123").error).toBeTruthy();
+  });
+
+  it("actualizarUsuario sin cambios reales no escribe historial", () => {
+    entrar("socio");
+    store.actualizarUsuario(idDe("legal"), { nombre: "Asesor Legal", rol: "legal", activo: true, contratos: [] });
+    expect(store.listarHistorial()).toEqual([]);
+  });
+
+  it("actualizarUsuario valida correo, nombre, rol y contraseña", () => {
+    entrar("socio");
+    const id = idDe("legal");
+    expect(() => store.actualizarUsuario(id, { email: "consulta@acrodocs.local" })).toThrow("Ya existe un usuario con ese correo.");
+    expect(() => store.actualizarUsuario(id, { email: "roto" })).toThrow("Escribe un correo válido.");
+    expect(() => store.actualizarUsuario(id, { nombre: " " })).toThrow("El nombre es obligatorio.");
+    expect(() => store.actualizarUsuario(id, { rol: "inventado" })).toThrow("Elige un rol válido.");
+    expect(() => store.actualizarUsuario(id, { password: "" })).toThrow("La contraseña es obligatoria.");
+    expect(() => store.actualizarUsuario(id, { password: "  " })).toThrow("La contraseña es obligatoria.");
+    expect(() => store.actualizarUsuario("no-existe", { nombre: "X" })).toThrow("El usuario no existe.");
+    // conservar su propio correo (en otras mayúsculas) no cuenta como repetido
+    expect(store.actualizarUsuario(id, { email: "LEGAL@acrodocs.local" }).email).toBe("legal@acrodocs.local");
+    expect(leerV7().usuarios.find((u) => u.id === id).password).toBe("legal123");
+    expect(store.listarHistorial()).toEqual([]);
+  });
+
+  it("omitir la contraseña en los cambios conserva la actual", () => {
+    entrar("socio");
+    store.actualizarUsuario(idDe("legal"), { nombre: "Asesora Legal" });
+    expect(leerV7().usuarios.find((u) => u.rol === "legal").password).toBe("legal123");
+  });
+});
+
+describe("matriz de permisos", () => {
+  const MENSAJE_PERMISO = "No tienes permiso para esta acción.";
+
+  it("getPermisosRoles exige usuarios y devuelve una copia", () => {
+    entrar("asis_adm");
+    expect(() => store.getPermisosRoles()).toThrow(MENSAJE_PERMISO);
+    store.logout();
+    entrar("socio");
+    const matriz = store.getPermisosRoles();
+    expect(matriz).toEqual(MATRIZ_INICIAL);
+    matriz.consulta.push("borrar_doc");
+    expect(store.getPermisosRoles().consulta).toEqual(MATRIZ_INICIAL.consulta);
+  });
+
+  it("setPermisoRol(\"gerente\", ...) lanza error y no cambia nada", () => {
+    entrar("socio");
+    expect(() => store.setPermisoRol("gerente", "borrar_doc", false)).toThrow("Los permisos del gerente general no se pueden modificar.");
+    expect(() => store.setPermisoRol("gerente", "borrar_doc", true)).toThrow();
+    expect(store.getPermisosRoles().gerente).toEqual(MATRIZ_INICIAL.gerente);
+    expect(store.listarHistorial()).toEqual([]);
+    // el gerente tampoco puede tocar su propia fila
+    store.logout();
+    entrar("gerente");
+    expect(() => store.setPermisoRol("gerente", "usuarios", false)).toThrow();
+  });
+
+  it("setPermisoRol(\"asis_adm\",\"borrar_doc\",true) habilita borrar_doc al asistente", () => {
+    entrar("asis_adm");
+    expect(store.puede("borrar_doc")).toBe(false);
+    store.logout();
+
+    entrar("socio");
+    const matriz = store.setPermisoRol("asis_adm", "borrar_doc", true);
+    expect(matriz.asis_adm).toContain("borrar_doc");
+    expect(store.getPermisosRoles().asis_adm).toContain("borrar_doc");
+    store.logout();
+
+    entrar("asis_adm");
+    expect(store.puede("borrar_doc")).toBe(true);
+    expect(leerV7().permisosRoles.asis_adm.filter((p) => p === "borrar_doc")).toHaveLength(1);
+    // los demás roles no se alteran
+    expect(leerV7().permisosRoles.asis_tec).toEqual(MATRIZ_INICIAL.asis_tec);
+  });
+
+  it("setPermisoRol quita un permiso y deja ambos cambios en el historial", () => {
+    entrar("socio");
+    store.setPermisoRol("asis_adm", "borrar_doc", true);
+    store.setPermisoRol("asis_adm", "subir", false);
+    const lista = store.listarHistorial();
+    expect(lista).toHaveLength(2);
+    expect(lista[0]).toMatchObject({ accion: "editar", objeto: "permisos" });
+    expect(lista[0].detalle).toContain("Asistente administrativo");
+    expect(lista[0].detalle).toContain("Subir documentos");
+    expect(lista[1].detalle).toContain("Eliminar documentos");
+    expect(lista[1].objeto).toBe("permisos");
+    store.logout();
+    entrar("asis_adm");
+    expect(store.puede("subir")).toBe(false);
+    expect(store.puede("descargar")).toBe(true);
+  });
+
+  it("repetir el mismo valor no cambia nada ni escribe historial", () => {
+    entrar("socio");
+    store.setPermisoRol("asis_adm", "subir", true);
+    store.setPermisoRol("asis_adm", "borrar_doc", false);
+    expect(store.listarHistorial()).toEqual([]);
+    expect(store.getPermisosRoles().asis_adm).toEqual(MATRIZ_INICIAL.asis_adm);
+  });
+
+  it("rechaza roles y permisos que no existen", () => {
+    entrar("socio");
+    expect(() => store.setPermisoRol("inventado", "subir", true)).toThrow("El rol no existe.");
+    expect(() => store.setPermisoRol("consulta", "inventado", true)).toThrow("El permiso no existe.");
+    expect(Object.keys(store.getPermisosRoles())).not.toContain("inventado");
+    expect(store.listarHistorial()).toEqual([]);
+  });
+
+  it("solo quien tiene el permiso usuarios puede cambiar la matriz", () => {
+    entrar("jefe");
+    expect(() => store.setPermisoRol("consulta", "subir", true)).toThrow(MENSAJE_PERMISO);
+    store.logout();
+    entrar("socio");
+    store.setPermisoRol("jefe", "usuarios", true);
+    store.logout();
+    entrar("jefe");
+    expect(store.setPermisoRol("consulta", "subir", true).consulta).toContain("subir");
+  });
+});
+
+describe("respaldo previo a la migración", () => {
+  it("getRespaldoV6 devuelve el texto crudo guardado y exige el permiso respaldo", () => {
+    const crudo = JSON.stringify({ version: 6, tramites: [], items: [] });
+    localStorage.setItem("acrodocs_demo_v6", crudo);
+    entrar("gerente");
+    expect(store.getRespaldoV6()).toBe(crudo);
+    store.logout();
+    entrar("jefe");
+    expect(() => store.getRespaldoV6()).toThrow("No tienes permiso para esta acción.");
+  });
+
+  it("getRespaldoV6 devuelve null si no hubo migración", () => {
+    entrar("gerente");
+    expect(store.getRespaldoV6()).toBeNull();
+  });
+});
+
+describe("contratos asignables a un usuario", () => {
+  it("listarContratosAsignables devuelve todos los contratos aunque el usuario no vea todos, y exige usuarios", () => {
+    entrar("jefe");
+    expect(() => store.listarContratosAsignables()).toThrow("No tienes permiso para esta acción.");
+    store.logout();
+    entrar("socio");
+    store.setPermisoRol("residente", "usuarios", true);
+    store.logout();
+    entrar("residente"); // sin ver_todos: solo ve t-001
+    expect(store.listTramites().map((t) => t.id)).toEqual(["t-001"]);
+    const lista = store.listarContratosAsignables();
+    expect(lista.map((c) => c.id).sort()).toEqual(["t-001", "t-002"]);
+    expect(lista[0]).toEqual({ id: expect.any(String), codigo: expect.any(String), denominacion: expect.any(String) });
+  });
+});

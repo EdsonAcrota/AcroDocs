@@ -12,7 +12,7 @@ import {
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
 import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
-import { tienePermiso, veContrato } from "./permisos.js";
+import { tienePermiso, veContrato, PERMISOS, ROLES } from "./permisos.js";
 import { migrarV6aV7, copiarUsuariosDemo, copiarMatrizInicial } from "./migracion.js";
 
 const KEY = "acrodocs_demo_v7";
@@ -300,7 +300,8 @@ export const loginDemo = (email, password) => {
   const data = read();
   const correo = (email || "").trim().toLowerCase();
   const usuario = (data.usuarios || []).find((u) => String(u.email || "").toLowerCase() === correo);
-  if (!usuario || usuario.password !== password) {
+  // Una cuenta sin contraseña guardada nunca entra, ni siquiera con un campo vacío.
+  if (!usuario || String(usuario.password ?? "").trim() === "" || usuario.password !== password) {
     return { error: "Credenciales incorrectas. Revisa los usuarios de demostración." };
   }
   if (!usuario.activo) {
@@ -357,6 +358,197 @@ export const listarHistorial = ({ tramiteId, objeto } = {}) => {
     .filter((h) => tramiteId === undefined || tramiteId === null || h.tramiteId === tramiteId)
     .filter((h) => !objetos || objetos.includes(h.objeto))
     .filter((h) => h.tramiteId === undefined || h.tramiteId === null || veContrato(data.permisosRoles, usuario, h.tramiteId));
+};
+
+// ---------- Usuarios y matriz de permisos ----------
+// Todo requiere `usuarios`. Cada cambio y su registro en el historial se guardan
+// en una sola escritura (objeto "usuarios" para cuentas, "permisos" para la matriz).
+const MSG_GERENTE_INTOCABLE = "La cuenta del gerente general no se puede modificar.";
+const MSG_ULTIMO_GERENTE = "Debe haber al menos un gerente general activo.";
+const MSG_SOLO_GERENTE_ASIGNA = "Solo un gerente general puede asignar el rol de gerente general.";
+
+const CORREO_VALIDO = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+const textoVacio = (texto) => String(texto ?? "").trim() === "";
+const correoNormal = (texto) => String(texto ?? "").trim().toLowerCase();
+const nombreDeRol = (clave) => ROLES.find((r) => r.clave === clave)?.nombre || clave;
+const rolExiste = (clave) => ROLES.some((r) => r.clave === clave);
+
+// La contraseña demo nunca sale de la capa de datos hacia la interfaz.
+const usuarioPublico = (usuario) => {
+  const { password: _omitida, ...resto } = usuario;
+  return { ...resto, contratos: [...(resto.contratos || [])] };
+};
+
+// Solo ids de contratos que existen, sin repetir.
+const contratosExistentes = (data, contratos) => {
+  const ids = new Set(data.tramites.map((t) => t.id));
+  return [...new Set((Array.isArray(contratos) ? contratos : []).filter((id) => ids.has(id)))];
+};
+
+const gerentesActivosSalvo = (data, id) =>
+  data.usuarios.filter((u) => u.rol === "gerente" && u.activo && u.id !== id).length;
+
+const mismosElementos = (a, b) => a.length === b.length && a.every((x) => b.includes(x));
+
+export const listarUsuarios = () => {
+  const data = read();
+  exigirEn(data, "usuarios");
+  return data.usuarios.map(usuarioPublico);
+};
+
+// Todos los contratos, para asignarlos a un usuario. No se filtra por visibilidad:
+// quien administra usuarios debe poder asignar cualquiera, aunque él no los vea.
+export const listarContratosAsignables = () => {
+  const data = read();
+  exigirEn(data, "usuarios");
+  return data.tramites.map((t) => ({ id: t.id, codigo: t.codigo, denominacion: t.denominacion }));
+};
+
+export const crearUsuario = (datos = {}) => {
+  const data = read();
+  exigirEn(data, "usuarios");
+  const nombre = String(datos.nombre ?? "").trim();
+  const email = correoNormal(datos.email);
+  if (!nombre) throw new Error("El nombre es obligatorio.");
+  if (!CORREO_VALIDO.test(email)) throw new Error("Escribe un correo válido.");
+  if (textoVacio(datos.password)) throw new Error("La contraseña es obligatoria.");
+  if (!rolExiste(datos.rol)) throw new Error("Elige un rol válido.");
+  if (datos.rol === "gerente" && usuarioActual(data)?.rol !== "gerente") throw new Error(MSG_SOLO_GERENTE_ASIGNA);
+  if (data.usuarios.some((u) => correoNormal(u.email) === email)) throw new Error("Ya existe un usuario con ese correo.");
+
+  const usuario = {
+    id: uid(),
+    nombre,
+    email,
+    password: String(datos.password),
+    rol: datos.rol,
+    contratos: contratosExistentes(data, datos.contratos),
+    activo: true,
+  };
+  data.usuarios.push(usuario);
+  anotarHistorial(data, {
+    accion: "crear",
+    objeto: "usuarios",
+    objetoId: usuario.id,
+    detalle: `${nombre} (${email}) — ${nombreDeRol(usuario.rol)}`,
+  });
+  write(data);
+  return usuarioPublico(usuario);
+};
+
+// `cambios` admite nombre, email, password, rol, contratos y activo. Un campo
+// ausente no se toca; una contraseña presente no puede venir vacía.
+export const actualizarUsuario = (id, cambios = {}) => {
+  const data = read();
+  exigirEn(data, "usuarios");
+  const usuario = data.usuarios.find((u) => u.id === id);
+  if (!usuario) throw new Error("El usuario no existe.");
+  const editorEsGerente = usuarioActual(data)?.rol === "gerente";
+  if (usuario.rol === "gerente" && !editorEsGerente) throw new Error(MSG_GERENTE_INTOCABLE);
+
+  const siguiente = { ...usuario, contratos: [...(usuario.contratos || [])] };
+  const notas = [];
+  const trae = (campo) => cambios[campo] !== undefined;
+
+  if (trae("nombre")) {
+    const nombre = String(cambios.nombre).trim();
+    if (!nombre) throw new Error("El nombre es obligatorio.");
+    if (nombre !== usuario.nombre) notas.push(`nombre «${usuario.nombre}» → «${nombre}»`);
+    siguiente.nombre = nombre;
+  }
+  if (trae("email")) {
+    const email = correoNormal(cambios.email);
+    if (!CORREO_VALIDO.test(email)) throw new Error("Escribe un correo válido.");
+    if (data.usuarios.some((u) => u.id !== id && correoNormal(u.email) === email)) {
+      throw new Error("Ya existe un usuario con ese correo.");
+    }
+    if (email !== correoNormal(usuario.email)) notas.push(`correo ${usuario.email} → ${email}`);
+    siguiente.email = email;
+  }
+  if (trae("password")) {
+    if (textoVacio(cambios.password)) throw new Error("La contraseña es obligatoria.");
+    if (String(cambios.password) !== usuario.password) notas.push("contraseña cambiada");
+    siguiente.password = String(cambios.password);
+  }
+  if (trae("rol")) {
+    if (!rolExiste(cambios.rol)) throw new Error("Elige un rol válido.");
+    if (cambios.rol === "gerente" && usuario.rol !== "gerente" && !editorEsGerente) throw new Error(MSG_SOLO_GERENTE_ASIGNA);
+    if (cambios.rol !== usuario.rol) notas.push(`rol ${nombreDeRol(usuario.rol)} → ${nombreDeRol(cambios.rol)}`);
+    siguiente.rol = cambios.rol;
+  }
+  if (trae("contratos")) {
+    siguiente.contratos = contratosExistentes(data, cambios.contratos);
+    if (!mismosElementos(siguiente.contratos, usuario.contratos || [])) {
+      notas.push(`contratos asignados: ${siguiente.contratos.length}`);
+    }
+  }
+  if (trae("activo")) {
+    siguiente.activo = Boolean(cambios.activo);
+    if (siguiente.activo !== Boolean(usuario.activo)) notas.push(siguiente.activo ? "cuenta activada" : "cuenta desactivada");
+  }
+
+  // Siempre debe quedar al menos un gerente activo.
+  const eraGerenteActivo = usuario.rol === "gerente" && usuario.activo;
+  const seraGerenteActivo = siguiente.rol === "gerente" && siguiente.activo;
+  if (eraGerenteActivo && !seraGerenteActivo && gerentesActivosSalvo(data, id) === 0) throw new Error(MSG_ULTIMO_GERENTE);
+
+  if (notas.length === 0) return usuarioPublico(usuario);
+
+  // El registro se arma antes de aplicar el cambio: si el usuario se desactiva a
+  // sí mismo, la entrada igual queda a su nombre.
+  anotarHistorial(data, {
+    accion: "editar",
+    objeto: "usuarios",
+    objetoId: id,
+    detalle: `${siguiente.nombre}: ${notas.join("; ")}`,
+  });
+  Object.assign(usuario, siguiente);
+  write(data);
+  return usuarioPublico(usuario);
+};
+
+const copiarMatriz = (matriz) =>
+  Object.fromEntries(Object.entries(matriz || {}).map(([rol, lista]) => [rol, [...(Array.isArray(lista) ? lista : [])]]));
+
+export const getPermisosRoles = () => {
+  const data = read();
+  exigirEn(data, "usuarios");
+  return copiarMatriz(data.permisosRoles);
+};
+
+// Activa o quita un permiso a un rol. La fila del gerente no se toca.
+export const setPermisoRol = (rol, permiso, activo) => {
+  const data = read();
+  exigirEn(data, "usuarios");
+  if (rol === "gerente") throw new Error("Los permisos del gerente general no se pueden modificar.");
+  if (!rolExiste(rol)) throw new Error("El rol no existe.");
+  const definicion = PERMISOS.find((p) => p.clave === permiso);
+  if (!definicion) throw new Error("El permiso no existe.");
+
+  if (!data.permisosRoles || typeof data.permisosRoles !== "object") data.permisosRoles = {};
+  const actuales = Array.isArray(data.permisosRoles[rol]) ? data.permisosRoles[rol] : [];
+  const quiere = Boolean(activo);
+  if (actuales.includes(permiso) === quiere) return copiarMatriz(data.permisosRoles);
+
+  const conjunto = new Set(actuales);
+  if (quiere) conjunto.add(permiso);
+  else conjunto.delete(permiso);
+  // Se guarda siempre en el orden del catálogo de permisos.
+  data.permisosRoles[rol] = PERMISOS.map((p) => p.clave).filter((clave) => conjunto.has(clave));
+  anotarHistorial(data, {
+    accion: "editar",
+    objeto: "permisos",
+    objetoId: `${rol}:${permiso}`,
+    detalle: `${nombreDeRol(rol)} — ${definicion.nombre}: ${quiere ? "permiso otorgado" : "permiso quitado"}`,
+  });
+  write(data);
+  return copiarMatriz(data.permisosRoles);
+};
+
+// Texto crudo guardado al migrar desde v6, o null si no hubo migración.
+export const getRespaldoV6 = () => {
+  exigirEn(read(), "respaldo");
+  try { return localStorage.getItem(RESPALDO_V6); } catch { return null; }
 };
 
 // ---------- Contratos / trámites ----------

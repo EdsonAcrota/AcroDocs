@@ -2,14 +2,21 @@ import React, { useState } from "react";
 import {
   getFeriados, agregarFeriado, eliminarFeriado, hoyISO, exportarDatos, listAllTareas,
   listarCatalogoHitos, agregarCatalogoHito, actualizarCatalogoHito, eliminarCatalogoHito,
+  puede, getRespaldoV6,
 } from "../lib/store.js";
 import { catalogoDe } from "../lib/catalogo.js";
 import { descargarTexto, descargarComoZip } from "../lib/archivos.js";
+import UsuariosPermisos from "../components/UsuariosPermisos.jsx";
 
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }) : "—");
 
-export default function Configuracion({ session }) {
-  const admin = session?.rol === "admin";
+export default function Configuracion() {
+  // Cada sección se muestra según el permiso que la gobierna (§5.1).
+  const verUsuarios = puede("usuarios");
+  const verFeriados = puede("feriados");
+  const verCatalogo = puede("catalogo");
+  const verRespaldo = puede("respaldo");
+  const [hayRespaldoV6] = useState(() => verRespaldo && getRespaldoV6() !== null);
   const [feriados, setFeriados] = useState(getFeriados());
   const [nueva, setNueva] = useState("");
   const [mensaje, setMensaje] = useState("");
@@ -30,16 +37,16 @@ export default function Configuracion({ session }) {
 
   const etapasHito = catalogoDe(nuevoHito.tipoObjeto).etapas;
 
-  if (!admin) {
+  if (!verUsuarios && !verFeriados && !verCatalogo && !verRespaldo) {
     return (
       <div>
         <div className="vista-encabezado">
           <div>
             <div className="eyebrow">Configuración</div>
-            <h2>Feriados y días hábiles</h2>
+            <h2>Configuración</h2>
           </div>
         </div>
-        <div className="tarjeta"><div className="vacio">Esta configuración solo puede ser modificada por el administrador.</div></div>
+        <div className="tarjeta"><div className="vacio">Tu rol no tiene permisos de configuración. Pídele al gerente general que los habilite si los necesitas.</div></div>
       </div>
     );
   }
@@ -61,6 +68,20 @@ export default function Configuracion({ session }) {
   const descargarDatos = () => {
     descargarTexto(exportarDatos(), "acrodocs_respaldo.json");
     setMensaje("Respaldo de datos descargado.");
+  };
+
+  const descargarRespaldoV6 = () => {
+    try {
+      const texto = getRespaldoV6();
+      if (texto === null) {
+        setMensaje("No hay respaldo previo a la migración en este navegador.");
+        return;
+      }
+      descargarTexto(texto, "acrodocs_respaldo_v6.json");
+      setMensaje("Respaldo previo a la migración descargado.");
+    } catch (error) {
+      setMensaje(error?.message || "No se pudo descargar el respaldo previo a la migración.");
+    }
   };
 
   const descargarArchivos = async () => {
@@ -147,13 +168,16 @@ export default function Configuracion({ session }) {
       <div className="vista-encabezado">
         <div>
           <div className="eyebrow">Configuración</div>
-          <h2>Feriados y días hábiles</h2>
-          <p>Los feriados se usan para calcular vencimientos en días hábiles. Los plazos ya generados no se recalculan.</p>
+          <h2>Configuración</h2>
+          <p>Usuarios y permisos, feriados, catálogo y respaldos. Solo ves las secciones que tu rol permite.</p>
         </div>
       </div>
 
       {mensaje && <div className="nota-info">{mensaje}</div>}
 
+      {verUsuarios && <UsuariosPermisos />}
+
+      {verFeriados && (
       <div className="grid-2">
         <div className="tarjeta">
           <div className="tarjeta-cab"><h3>Agregar feriado</h3></div>
@@ -165,7 +189,7 @@ export default function Configuracion({ session }) {
               </label>
               <button type="submit" className="btn primario">Agregar feriado</button>
             </form>
-            <div className="ref">Los fines de semana ya se excluyen por defecto.</div>
+            <div className="ref">Los fines de semana ya se excluyen por defecto. Los feriados se usan para calcular vencimientos en días hábiles; los plazos ya generados no se recalculan.</div>
           </div>
         </div>
 
@@ -190,7 +214,9 @@ export default function Configuracion({ session }) {
           </div>
         </div>
       </div>
+      )}
 
+      {verCatalogo && (
       <div className="tarjeta">
         <div className="tarjeta-cab">
           <h3>Catálogo personalizado de hitos</h3>
@@ -277,17 +303,26 @@ export default function Configuracion({ session }) {
           </div>
         </div>
       </div>
+      )}
 
+      {verRespaldo && (
       <div className="tarjeta">
         <div className="tarjeta-cab"><h3>Respaldo y descargas</h3></div>
         <div className="cuerpo">
           <div className="acciones-descarga">
             <button type="button" className="btn" onClick={descargarDatos}>Descargar datos (JSON)</button>
             <button type="button" className="btn" onClick={descargarArchivos}>Descargar todos los archivos (ZIP)</button>
+            {hayRespaldoV6 && (
+              <button type="button" className="btn" onClick={descargarRespaldoV6}>Descargar respaldo previo a la migración</button>
+            )}
           </div>
           <div className="ref">El respaldo JSON contiene contratos, hitos, plantillas, feriados y configuración. Los archivos se agrupan por contrato e hito dentro del ZIP.</div>
+          {hayRespaldoV6 && (
+            <div className="ref">El respaldo previo a la migración es la copia exacta de los datos tal como estaban antes de pasar a la versión con usuarios y permisos.</div>
+          )}
         </div>
       </div>
+      )}
     </div>
   );
 }
