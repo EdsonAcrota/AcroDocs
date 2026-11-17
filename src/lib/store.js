@@ -23,6 +23,7 @@ import {
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
 import { calcularFlujo, instanciarPasos } from "./flujo.js";
+import { cargosVisibles, TIPOS_DOCUMENTO } from "./cargos.js";
 import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
 import { tienePermiso, veContrato, PERMISOS, ROLES } from "./permisos.js";
 import { migrarV6aV7, fundirCatalogo, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia } from "./migracion.js";
@@ -688,6 +689,10 @@ export const deleteTramite = (id) => {
   data.tramites = data.tramites.filter((t) => t.id !== id);
   data.items = data.items.filter((i) => i.tramite_id !== id);
   data.movimientos = (data.movimientos || []).filter((m) => m.tramiteId !== id);
+  for (const cargo of (data.cargos || []).filter((c) => c.tramiteId === id)) {
+    if (cargo.archivoCargoId) eliminarArchivo(cargo.archivoCargoId).catch(() => {});
+  }
+  data.cargos = (data.cargos || []).filter((c) => c.tramiteId !== id);
   data.ampliaciones = (data.ampliaciones || []).filter((a) => a.tramite_id !== id);
   if (data.configFianzas) delete data.configFianzas[id];
   for (const usuario of data.usuarios || []) {
@@ -1543,14 +1548,9 @@ export const registrarMovimiento = (itemId, datos = {}) => {
   return clonar(movimiento);
 };
 
-export const anularMovimiento = (id, motivo) => {
-  const data = read();
-  const movimiento = (data.movimientos || []).find((m) => m.id === id);
-  if (!movimiento) throw new Error("El movimiento no existe.");
-  exigirEn(data, "corregir", movimiento.tramiteId);
-  if (movimiento.anulado) throw new Error("El movimiento ya está anulado.");
-  const razon = String(motivo || "").trim();
-  if (!razon) throw new Error("Indica el motivo de la anulación.");
+// Marca el movimiento como anulado (nunca se borra), recalcula el hito y deja el
+// historial. Lo usan anularMovimiento y la anulación o eliminación de un cargo.
+const anularMovimientoEn = (data, movimiento, razon) => {
   const usuario = usuarioActual(data);
   movimiento.anulado = true;
   movimiento.anuladoPor = usuario?.nombre || "Sistema";
@@ -1560,10 +1560,21 @@ export const anularMovimiento = (id, motivo) => {
   anotarHistorial(data, {
     accion: "anular",
     objeto: "movimiento",
-    objetoId: id,
+    objetoId: movimiento.id,
     tramiteId: movimiento.tramiteId,
     detalle: `${item ? `${item.codigo} — ${item.nombre}` : "Hito"}: se anuló «${movimiento.tipo}» del ${movimiento.fecha}. Motivo: ${razon}`,
   });
+};
+
+export const anularMovimiento = (id, motivo) => {
+  const data = read();
+  const movimiento = (data.movimientos || []).find((m) => m.id === id);
+  if (!movimiento) throw new Error("El movimiento no existe.");
+  exigirEn(data, "corregir", movimiento.tramiteId);
+  if (movimiento.anulado) throw new Error("El movimiento ya está anulado.");
+  const razon = String(motivo || "").trim();
+  if (!razon) throw new Error("Indica el motivo de la anulación.");
+  anularMovimientoEn(data, movimiento, razon);
   write(data);
   return clonar(movimiento);
 };
@@ -1721,4 +1732,154 @@ export const alertasPanel = (hoyIso = hoy()) => {
   }
 
   return alertas.sort((a, b) => ORDEN_GRUPOS.indexOf(a.grupo) - ORDEN_GRUPOS.indexOf(b.grupo) || a.dias - b.dias);
+};
+
+// ---------- Mesa de partes (§5.7) ----------
+// Cada cargo es el sello de recepción de un documento presentado. Va ligado a un
+// contrato y, si corresponde, a un paso del trámite: en ese caso crea el movimiento
+// «presentado» con la fecha de recepción y hace avanzar el flujo.
+const fechaIso = (texto) => /^\d{4}-\d{2}-\d{2}$/.test(String(texto || ""));
+
+export const registrarCargo = (datos = {}) => {
+  const data = read();
+  const tramiteId = datos.tramiteId || null;
+  exigirEn(data, "registrar", tramiteId || undefined);
+  if (!fechaIso(datos.fecha)) throw new Error("Indica la fecha de recepción.");
+  const entidad = String(datos.entidad || "").trim();
+  const numeroRegistro = String(datos.numeroRegistro || "").trim();
+  const asunto = String(datos.asunto || "").trim();
+  if (!entidad) throw new Error("Indica la entidad.");
+  if (!numeroRegistro) throw new Error("Indica el número de registro del cargo.");
+  if (!asunto) throw new Error("Indica el asunto.");
+  const tipoDocumento = TIPOS_DOCUMENTO.includes(datos.tipoDocumento) ? datos.tipoDocumento : "carta";
+
+  const tramite = tramiteId ? data.tramites.find((t) => t.id === tramiteId) : null;
+  if (tramiteId && !tramite) throw new Error("El contrato no existe.");
+  const item = datos.itemId ? data.items.find((i) => i.id === datos.itemId) : null;
+  if (datos.itemId && (!item || item.tramite_id !== tramiteId)) throw new Error("El hito no pertenece al contrato elegido.");
+
+  // Emisor: la empresa o el consorcio de un contrato.
+  let emisor = "empresa";
+  let emisorNombre = data.empresa?.razonSocial || "Empresa propia";
+  if (datos.emisor && datos.emisor !== "empresa") {
+    const contrato = data.tramites.find((t) => t.id === datos.emisor && t.ejecutor?.tipo === "consorcio");
+    if (!contrato) throw new Error("El consorcio emisor no existe.");
+    emisor = contrato.id;
+    emisorNombre = contrato.ejecutor.nombre || "Consorcio";
+  }
+
+  const usuario = usuarioActual(data);
+  const cargo = {
+    id: uid(),
+    fecha: datos.fecha,
+    hora: datos.hora || "",
+    entidad,
+    oficina: String(datos.oficina || "").trim(),
+    numeroRegistro,
+    asunto,
+    tipoDocumento,
+    numeroDocumento: String(datos.numeroDocumento || "").trim(),
+    emisor,
+    emisorNombre,
+    presentadoPor: String(datos.presentadoPor || "").trim(),
+    tramiteId,
+    itemId: item?.id || null,
+    hitoCodigo: item ? item.codigo : "",
+    pasoClave: datos.pasoClave || null,
+    movimientoId: null,
+    archivoCargoId: datos.archivoCargoId || null,
+    archivoCargoNombre: datos.archivoCargoNombre || "",
+    registradoPor: usuario?.id || null,
+    registradoPorNombre: usuario?.nombre || "Sistema",
+    registrado: new Date().toISOString(),
+  };
+
+  if (item && cargo.pasoClave) {
+    const movimiento = crearMovimientoEn(data, item, {
+      pasoClave: cargo.pasoClave,
+      tipo: "presentado",
+      fecha: cargo.fecha,
+      hora: cargo.hora,
+      numeroDocumento: cargo.numeroDocumento,
+      cargoId: cargo.id,
+      archivoId: cargo.archivoCargoId,
+      archivoNombre: cargo.archivoCargoNombre,
+      nota: `Cargo ${numeroRegistro} — ${entidad}`,
+    });
+    cargo.movimientoId = movimiento.id;
+  }
+  if (!Array.isArray(data.cargos)) data.cargos = [];
+  data.cargos.push(cargo);
+  write(data);
+  return clonar(cargo);
+};
+
+const cargoEn = (data, id) => {
+  const cargo = (data.cargos || []).find((c) => c.id === id);
+  if (!cargo) throw new Error("El cargo no existe.");
+  return cargo;
+};
+
+export const anularCargo = (id, motivo) => {
+  const data = read();
+  const cargo = cargoEn(data, id);
+  exigirEn(data, "corregir", cargo.tramiteId || undefined);
+  if (cargo.anulado) throw new Error("El cargo ya está anulado.");
+  const razon = String(motivo || "").trim();
+  if (!razon) throw new Error("Indica el motivo de la anulación.");
+  const usuario = usuarioActual(data);
+  cargo.anulado = true;
+  cargo.anuladoPor = usuario?.nombre || "Sistema";
+  cargo.motivoAnulacion = razon;
+  const movimiento = cargo.movimientoId ? (data.movimientos || []).find((m) => m.id === cargo.movimientoId) : null;
+  if (movimiento && !movimiento.anulado) anularMovimientoEn(data, movimiento, `Cargo anulado: ${razon}`);
+  anotarHistorial(data, {
+    accion: "anular",
+    objeto: "cargo",
+    objetoId: id,
+    tramiteId: cargo.tramiteId || undefined,
+    detalle: `Cargo ${cargo.numeroRegistro} (${cargo.entidad}, ${cargo.fecha}) anulado. Motivo: ${razon}`,
+  });
+  write(data);
+  return clonar(cargo);
+};
+
+// Eliminación definitiva: requiere `borrar_doc`, borra el sello escaneado y deja
+// el historial. El movimiento vinculado se anula, no se borra.
+export const eliminarCargo = (id) => {
+  const data = read();
+  const cargo = cargoEn(data, id);
+  exigirEn(data, "borrar_doc", cargo.tramiteId || undefined);
+  const movimiento = cargo.movimientoId ? (data.movimientos || []).find((m) => m.id === cargo.movimientoId) : null;
+  if (movimiento && !movimiento.anulado) anularMovimientoEn(data, movimiento, "Cargo eliminado");
+  data.cargos = data.cargos.filter((c) => c.id !== id);
+  anotarHistorial(data, {
+    accion: "eliminar",
+    objeto: "cargo",
+    objetoId: id,
+    tramiteId: cargo.tramiteId || undefined,
+    detalle: `Cargo ${cargo.numeroRegistro} (${cargo.entidad}, ${cargo.fecha}) eliminado.`,
+  });
+  write(data);
+  if (cargo.archivoCargoId) eliminarArchivo(cargo.archivoCargoId).catch(() => {});
+  return true;
+};
+
+// Filtros: desde y hasta (fecha de recepción), tramiteId, entidad (parte del
+// nombre), emisor ("empresa" o id de un contrato en consorcio) y texto libre.
+export const listarCargos = (filtros = {}) => {
+  const data = read();
+  const usuario = usuarioActual(data);
+  const buscar = String(filtros.texto || "").trim().toLowerCase();
+  const entidad = String(filtros.entidad || "").trim().toLowerCase();
+  const lista = cargosVisibles(data.cargos || [], usuario, data.permisosRoles)
+    .filter((c) => (!filtros.desde || c.fecha >= filtros.desde)
+      && (!filtros.hasta || c.fecha <= filtros.hasta)
+      && (!filtros.tramiteId || c.tramiteId === filtros.tramiteId)
+      && (!filtros.emisor || c.emisor === filtros.emisor)
+      && (!entidad || c.entidad.toLowerCase().includes(entidad))
+      && (!buscar || [c.asunto, c.numeroRegistro, c.numeroDocumento, c.oficina, c.presentadoPor, c.entidad, c.hitoCodigo]
+        .some((v) => String(v || "").toLowerCase().includes(buscar))));
+  return clonar(lista.sort((a, b) =>
+    b.fecha.localeCompare(a.fecha) || String(b.hora).localeCompare(String(a.hora)) || String(b.registrado).localeCompare(String(a.registrado))));
 };

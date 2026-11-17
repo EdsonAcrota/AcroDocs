@@ -1686,3 +1686,33 @@ describe("alertas del Panel", () => {
     expect(store.alertasPanel("2026-11-17")).toEqual([]);
   });
 });
+
+describe("mesa de partes", () => {
+  const datosCargo = (extra = {}) => ({
+    fecha: "2026-11-24", hora: "09:30", entidad: "Municipalidad Distrital de San Jerónimo", oficina: "Mesa de partes",
+    numeroRegistro: "2026-004512", asunto: "Solicitud de ampliación de plazo", tipoDocumento: "solicitud", ...extra,
+  });
+
+  it("un cargo vinculado a un paso crea el movimiento y avanza el flujo; anularlo lo reabre", () => {
+    entrar("gerente");
+    const item = store.addTareaEventual("t-001", "ampliacion");
+    store.registrarMovimiento(item.id, { pasoClave: "fin_causal", tipo: "asiento", fecha: "2026-11-10" });
+    const cargo = store.registrarCargo(datosCargo({ tramiteId: "t-001", itemId: item.id, pasoClave: "solicitud" }));
+    expect(cargo.movimientoId).toBeTruthy();
+    expect(store.flujoDeItem(item.id).pasos.find((p) => p.clave === "solicitud").estado).toBe("cumplido");
+
+    store.anularCargo(cargo.id, "Se registró por error");
+    expect(store.flujoDeItem(item.id).pasos.find((p) => p.clave === "solicitud").estado).not.toBe("cumplido");
+    expect(store.listarCargos({ tramiteId: "t-001" })[0].anulado).toBe(true);
+  });
+
+  it("el asistente puede registrar un cargo pero no eliminarlo, y el cargo exige número de registro", () => {
+    entrar("asis_adm");
+    expect(() => store.registrarCargo(datosCargo({ numeroRegistro: "" }))).toThrow("Indica el número de registro del cargo.");
+    const cargo = store.registrarCargo(datosCargo({ tramiteId: "t-001" }));
+    expect(() => store.eliminarCargo(cargo.id)).toThrow("No tienes permiso");
+    entrar("gerente");
+    expect(store.eliminarCargo(cargo.id)).toBe(true);
+    expect(store.listarCargos()).toHaveLength(0);
+  });
+});
