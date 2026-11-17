@@ -1,0 +1,789 @@
+// Capa de datos del demo. Persiste en localStorage para que la app funcione
+// sin Supabase. Los archivos adjuntos se guardan en IndexedDB (src/lib/archivos.js).
+// En producción esta capa se reemplaza por Supabase/PostgreSQL conservando los
+// mismos campos y la misma estructura jerárquica del expediente.
+
+import {
+  crearTareas,
+  crearTareaEventual as crearTareaEventualCatalogo,
+  listarEventuales as listarEventualesCatalogo,
+  listarHitosOpcionales as listarHitosOpcionalesCatalogo,
+  plantillasPorDefecto,
+  configurarFeriados,
+} from "./catalogo.js";
+import { eliminarArchivo } from "./archivos.js";
+
+const KEY = "acrodocs_demo_v6";
+const KEYS_ANTERIORES = [];
+
+const uid = () =>
+  (typeof crypto !== "undefined" && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : `id-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+const hoy = () => {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+};
+
+const FERIADOS = [
+  "2026-01-01", "2026-01-02", "2026-04-02", "2026-04-03", "2026-05-01",
+  "2026-06-07", "2026-06-29", "2026-07-23", "2026-07-28", "2026-07-29",
+  "2026-08-06", "2026-08-30", "2026-10-08", "2026-11-01", "2026-12-08",
+  "2026-12-09", "2026-12-25",
+];
+
+const sumarDias = (fecha, dias) => {
+  if (!fecha) return "";
+  const d = new Date(`${fecha}T12:00:00`);
+  d.setDate(d.getDate() + Number(dias || 0));
+  return d.toISOString().slice(0, 10);
+};
+
+export const esHabil = (fecha, feriados = read().feriados || FERIADOS) => {
+  if (!fecha) return false;
+  const d = new Date(`${fecha}T12:00:00`);
+  const dia = d.getDay();
+  return dia !== 0 && dia !== 6 && !feriados.includes(fecha);
+};
+
+export const sumarHabiles = (fecha, dias, feriados = read().feriados || FERIADOS) => {
+  if (!fecha) return "";
+  let d = new Date(`${fecha}T12:00:00`);
+  let n = Number(dias) || 0;
+  const paso = n >= 0 ? 1 : -1;
+  n = Math.abs(n);
+  while (n > 0) {
+    d.setDate(d.getDate() + paso);
+    const iso = d.toISOString().slice(0, 10);
+    if (esHabil(iso, feriados)) n -= 1;
+  }
+  return d.toISOString().slice(0, 10);
+};
+
+export const diasEntre = (a, b) => {
+  if (!a || !b) return 0;
+  const d1 = new Date(`${a}T12:00:00`);
+  const d2 = new Date(`${b}T12:00:00`);
+  return Math.round((d2 - d1) / 86400000);
+};
+
+const normalizar = (texto) =>
+  String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]/g, "");
+
+const ordenarTareas = (tareas) =>
+  [...tareas].sort((a, b) => String(a.codigo || "").localeCompare(String(b.codigo || ""), "es", { numeric: true }));
+
+const marcar = (tareas, completados = [], revision = [], observados = []) => {
+  for (const t of tareas) {
+    if (completados.includes(t.codigo)) t.estado = "Completado";
+    if (revision.includes(t.codigo)) t.estado = "En revisión";
+    if (observados.includes(t.codigo)) t.estado = "Observado";
+  }
+  return tareas;
+};
+
+const seed = () => {
+  const data = {
+    version: 6,
+    session: null,
+    feriados: FERIADOS,
+    plantillasDocs: plantillasPorDefecto(),
+    catalogoHitos: [],
+    configFianzas: {},
+    tramites: [
+      {
+        id: "t-001",
+        codigo: "DEMO-OC-2026-001",
+        denominacion: "Mejoramiento de la I.E. N° 579 – Quelcaya",
+        entidad: "Municipalidad Distrital de San Jerónimo",
+        contratista: "Consorcio Educativo Quelcaya",
+        tipo_objeto: "Obra",
+        area: "Infraestructura",
+        monto: 1850000,
+        fecha_inicio: "2026-06-01",
+        fecha_fin: "2026-12-15",
+        fecha_suscripcion: "2026-05-25",
+        estado: "En ejecución",
+        created_at: "2026-05-20",
+      },
+      {
+        id: "t-002",
+        codigo: "DEMO-CA-2026-002",
+        denominacion: "Consultoría de obra para expediente técnico del mejoramiento vial",
+        entidad: "Municipalidad Distrital de San Jerónimo",
+        contratista: "Ingeniería y Proyectos del Sur S.A.C.",
+        tipo_objeto: "Consultoría de obra",
+        area: "Infraestructura",
+        monto: 185000,
+        fecha_inicio: "2026-08-03",
+        fecha_fin: "2026-11-30",
+        fecha_suscripcion: "2026-07-28",
+        estado: "En ejecución",
+        created_at: "2026-07-15",
+      },
+    ],
+    items: [],
+    ampliaciones: [],
+  };
+
+  const obra = marcar(
+    crearTareas(data.tramites[0], data.plantillasDocs, data.catalogoHitos),
+    [
+      "1.1.1", "1.1.2", "1.1.4", "1.1.5",
+      "1.2.1", "1.2.2", "1.2.3", "1.2.5", "1.2.6", "1.2.7", "1.2.8", "1.2.9",
+      "1.2.10.1", "1.2.11.1",
+      "1.3.2.1", "1.3.2.2", "1.3.2.3", "1.3.2.4", "1.3.2.5",
+      "1.3.3.1", "1.3.3.2", "1.3.3.3", "1.3.3.4", "1.3.3.5",
+    ],
+    ["1.3.2.6", "1.3.3.6"],
+    []
+  );
+  const sinAdelanto = obra.find((t) => t.codigo === "1.1.3");
+  if (sinAdelanto) sinAdelanto.estado = "No aplica";
+
+  const consultoria = marcar(
+    crearTareas(data.tramites[1], data.plantillasDocs, data.catalogoHitos),
+    [
+      "2.1.1", "2.1.2", "2.1.3", "2.1.4", "2.1.5", "2.1.6", "2.1.7",
+      "2.2.1", "2.2.2", "2.2.3", "2.2.4", "2.2.5", "2.2.6",
+      "2.2.8.1", "2.2.8.2", "2.2.8.3",
+      "2.3.1.1", "2.3.1.2",
+      "2.3.2.1", "2.3.2.2", "2.3.2.3",
+      "2.3.3.1", "2.3.3.2", "2.3.3.3",
+    ],
+    ["2.2.8.4", "2.3.1.3", "2.3.2.4", "2.3.3.4"],
+    []
+  );
+
+  // Trámite eventual de ejemplo: cambio de personal clave en la obra.
+  const cambio = crearTareaEventualCatalogo(
+    data.tramites[0],
+    "cambio_personal",
+    obra
+  );
+  if (cambio) {
+    cambio.estado = "En revisión";
+    cambio.responsable = "Residente de obra";
+    cambio.observacion = "Propuesta de reemplazo del residente por motivos de salud. Sustento y CV del propuesto adjuntos al expediente.";
+    obra.push(cambio);
+  }
+
+  data.configFianzas[data.tramites[0].id] = { periodo: "anual", tipos: ["fiel_cumplimiento"] };
+  data.configFianzas[data.tramites[1].id] = { periodo: "anual", tipos: ["fiel_cumplimiento"] };
+  data.items = ordenarTareas([...obra, ...consultoria]);
+  return data;
+};
+
+const migrar = (anterior) => {
+  const data = {
+    version: 6,
+    session: anterior?.session || null,
+    feriados: anterior?.feriados?.length ? anterior.feriados : FERIADOS,
+    plantillasDocs: anterior?.plantillasDocs || plantillasPorDefecto(),
+    catalogoHitos: Array.isArray(anterior?.catalogoHitos) ? anterior.catalogoHitos : [],
+    configFianzas: anterior?.configFianzas || {},
+    tramites: Array.isArray(anterior?.tramites) ? anterior.tramites : [],
+    items: [],
+    ampliaciones: [],
+  };
+  const itemsViejos = Array.isArray(anterior?.items) ? anterior.items : [];
+  const ampsViejas = Array.isArray(anterior?.ampliaciones) ? anterior.ampliaciones : [];
+
+  for (const t of data.tramites) {
+    const previos = itemsViejos.filter((i) => i.tramite_id === t.id);
+    const mapa = new Map(previos.map((i) => [normalizar(i.nombre), i]));
+    const nuevas = crearTareas(t, data.plantillasDocs, data.catalogoHitos);
+    for (const tarea of nuevas) {
+      const viejo = mapa.get(normalizar(tarea.nombre));
+      if (viejo) {
+        tarea.estado = viejo.estado || tarea.estado;
+        tarea.responsable = viejo.responsable || "";
+        tarea.fecha = viejo.fecha || "";
+        tarea.observacion = viejo.observacion || "";
+      }
+    }
+    data.items.push(...nuevas);
+  }
+
+  // Las ampliaciones del modelo anterior pasan a ser trámites eventuales.
+  for (const amp of ampsViejas) {
+    const tramite = data.tramites.find((t) => t.id === amp.tramite_id);
+    if (!tramite) continue;
+    const existentes = data.items.filter((i) => i.tramite_id === tramite.id);
+    const tarea = crearTareaEventualCatalogo(tramite, "ampliacion", existentes);
+    if (!tarea) continue;
+    tarea.nombre = `Ampliación de plazo — ${amp.causal || "sin causal"}`;
+    tarea.estado = amp.estado === "Resuelta" ? "Completado" : "En revisión";
+    tarea.observacion = amp.sustento || "";
+    tarea.fecha_limite = amp.nuevo_fin || tarea.fecha_limite;
+    tarea.fecha = amp.fecha_solicitud || tarea.fecha;
+    data.items.push(tarea);
+    if (amp.dias_solicitados) {
+      tarea.observacion = `${tarea.observacion} Días solicitados: ${amp.dias_solicitados}.`.trim();
+    }
+  }
+
+  data.items = ordenarTareas(data.items);
+  return data;
+};
+
+let memoria = null;
+
+const read = () => {
+  try {
+    const raw = localStorage.getItem(KEY);
+    if (raw) {
+      const data = JSON.parse(raw);
+      if (Number(data.version) >= 6) {
+        if (!Array.isArray(data.feriados)) data.feriados = [...FERIADOS];
+        if (!data.plantillasDocs || typeof data.plantillasDocs !== "object") data.plantillasDocs = plantillasPorDefecto();
+        if (!Array.isArray(data.catalogoHitos)) data.catalogoHitos = [];
+        if (!data.configFianzas || typeof data.configFianzas !== "object") data.configFianzas = {};
+        configurarFeriados(data.feriados);
+        return data;
+      }
+    }
+    for (const key of KEYS_ANTERIORES) {
+      const anterior = localStorage.getItem(key);
+      if (anterior) {
+        const data = migrar(JSON.parse(anterior));
+        configurarFeriados(data.feriados);
+        localStorage.setItem(KEY, JSON.stringify(data));
+        localStorage.removeItem(key);
+        return data;
+      }
+    }
+  } catch { /* almacenamiento no disponible */ }
+  if (memoria) return memoria;
+  const data = seed();
+  configurarFeriados(data.feriados);
+  memoria = data;
+  try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
+  return data;
+};
+
+const write = (data) => {
+  memoria = data;
+  try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
+  return data;
+};
+
+// ---------- Configuración ----------
+export const getFeriados = () => [...(read().feriados || [])].sort();
+
+export const agregarFeriado = (fecha) => {
+  if (!fecha) return getFeriados();
+  const data = read();
+  data.feriados = [...new Set([...(data.feriados || []), fecha])].sort();
+  configurarFeriados(data.feriados);
+  write(data);
+  return getFeriados();
+};
+
+export const eliminarFeriado = (fecha) => {
+  const data = read();
+  data.feriados = (data.feriados || []).filter((f) => f !== fecha);
+  configurarFeriados(data.feriados);
+  write(data);
+  return getFeriados();
+};
+
+// ---------- Sesión ----------
+export const getSession = () => read().session;
+
+export const loginDemo = (email, password) => {
+  const data = read();
+  const correo = (email || "").trim().toLowerCase();
+  const claves = {
+    "admin@acrodocs.local": "admin123",
+    "logistica@acrodocs.local": "logistica123",
+    "area@acrodocs.local": "area123",
+    "legal@acrodocs.local": "legal123",
+    "lectura@acrodocs.local": "lectura123",
+  };
+  if (!claves[correo] || claves[correo] !== password) {
+    return { error: "Credenciales incorrectas. Revisa los usuarios de demostración." };
+  }
+  const roles = {
+    "admin@acrodocs.local": { nombre: "Administrador", rol: "admin" },
+    "logistica@acrodocs.local": { nombre: "Logística", rol: "logistica" },
+    "area@acrodocs.local": { nombre: "Área Usuaria", rol: "area_usuaria" },
+    "legal@acrodocs.local": { nombre: "Asesoría Legal", rol: "legal" },
+    "lectura@acrodocs.local": { nombre: "Consulta", rol: "lectura" },
+  };
+  data.session = { email: correo, ...roles[correo] };
+  write(data);
+  return { session: data.session };
+};
+
+export const logout = () => {
+  const data = read();
+  data.session = null;
+  write(data);
+};
+
+// ---------- Contratos / trámites ----------
+export const listTramites = () =>
+  [...read().tramites].sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+
+export const getTramite = (id) => read().tramites.find((t) => t.id === id) || null;
+
+export const createTramite = (form) => {
+  const data = read();
+  const t = {
+    id: uid(),
+    codigo: form.codigo?.trim() || `TR-${Date.now()}`,
+    denominacion: form.denominacion?.trim() || "Sin denominación",
+    entidad: form.entidad || "",
+    contratista: form.contratista || "",
+    tipo_objeto: form.tipo_objeto || "Obra",
+    area: form.area || "Infraestructura",
+    monto: Number(form.monto || 0),
+    fecha_inicio: form.fecha_inicio || hoy(),
+    fecha_fin: form.fecha_fin || "",
+    fecha_suscripcion: form.fecha_suscripcion || form.fecha_inicio || hoy(),
+    estado: form.estado || "En ejecución",
+    created_at: hoy(),
+  };
+  data.tramites.push(t);
+  data.items.push(...crearTareas(t, data.plantillasDocs, data.catalogoHitos));
+  data.configFianzas[t.id] = { periodo: "anual", tipos: ["fiel_cumplimiento"] };
+  write(data);
+  return t;
+};
+
+export const updateTramite = (id, cambios) => {
+  const data = read();
+  data.tramites = data.tramites.map((t) => (t.id === id ? { ...t, ...cambios } : t));
+  write(data);
+  return data.tramites.find((t) => t.id === id) || null;
+};
+
+// ---------- Expediente: hitos y trámites ----------
+export const listItems = (tramiteId) =>
+  ordenarTareas(read().items.filter((i) => i.tramite_id === tramiteId));
+
+export const getItem = (id) => read().items.find((i) => i.id === id) || null;
+
+export const updateItem = (id, cambios) => {
+  const data = read();
+  data.items = data.items.map((i) => (i.id === id ? { ...i, ...cambios } : i));
+  write(data);
+  return data.items.find((i) => i.id === id) || null;
+};
+
+export const addItem = (tramiteId, nombre, etapaNombre = "Hitos propios", extra = {}) => {
+  const data = read();
+  const etapaRef = data.items.find(
+    (i) => i.tramite_id === tramiteId && i.etapaNombre === etapaNombre
+  );
+  const propias = data.items.filter((i) => i.tramite_id === tramiteId && i.tipo === "propio");
+  const numeros = propias
+    .map((i) => Number(String(i.codigo || "").split(".").pop()))
+    .filter((n) => Number.isFinite(n));
+  const count = (numeros.length ? Math.max(...numeros) : 0) + 1;
+  const etapaCodigo = etapaRef?.etapaCodigo || "P";
+  const item = {
+    id: uid(),
+    tramite_id: tramiteId,
+    codigo: `P.${count}`,
+    nombre,
+    etapaCodigo,
+    etapaNombre: etapaNombre || "Hitos propios",
+    seccionCodigo: etapaRef ? `${etapaCodigo}.P` : "P",
+    seccionNombre: "Hitos propios",
+    tipo: "propio",
+    plantilla: "",
+    estado: "Pendiente",
+    responsable: "",
+    fecha: "",
+    fecha_limite: "",
+    observacion: "",
+    docsRequeridos: extra.docsRequeridos || [],
+    documentos: [],
+    plazoDias: 0,
+    plazoBase: "manual",
+    plazoHabiles: true,
+    norma: "",
+    nota: "Hito agregado manualmente al expediente.",
+    recurrente: false,
+    periodo: "",
+    ...extra,
+  };
+  data.items.push(item);
+  write(data);
+  return item;
+};
+
+export const removeItem = (id) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === id);
+  for (const doc of item?.documentos || []) {
+    if (doc.archivoId) eliminarArchivo(doc.archivoId).catch(() => {});
+  }
+  data.items = data.items.filter((i) => i.id !== id);
+  write(data);
+};
+
+export const addTareaEventual = (tramiteId, clave) => {
+  const data = read();
+  const tramite = data.tramites.find((t) => t.id === tramiteId);
+  if (!tramite) return null;
+  const existentes = data.items.filter((i) => i.tramite_id === tramiteId);
+  const tarea = crearTareaEventualCatalogo(tramite, clave, existentes);
+  if (!tarea) return null;
+  data.items.push(tarea);
+  write(data);
+  return tarea;
+};
+
+export const listarEventuales = (tipo) => listarEventualesCatalogo(tipo);
+
+// ---------- Plantillas de documentos ----------
+export const getPlantilla = (clave) => {
+  const plantillas = read().plantillasDocs || {};
+  return plantillas[clave] || null;
+};
+
+export const guardarPlantilla = (clave, plantilla) => {
+  if (!clave) return null;
+  const data = read();
+  if (!data.plantillasDocs || typeof data.plantillasDocs !== "object") data.plantillasDocs = {};
+  const actual = data.plantillasDocs[clave] || {};
+  const extra = {};
+  for (const campo of ["nombre", "plazoBase", "norma", "nota"]) {
+    if (plantilla[campo] !== undefined) extra[campo] = plantilla[campo];
+  }
+  if (plantilla.plazoDias !== undefined) extra.plazoDias = Number(plantilla.plazoDias) || 0;
+  if (plantilla.plazoHabiles !== undefined) extra.plazoHabiles = plantilla.plazoHabiles !== false;
+  data.plantillasDocs[clave] = {
+    ...actual,
+    docs: [...new Set((plantilla.docs || actual.docs || []).map((d) => String(d).trim()).filter(Boolean))],
+    cumplimiento: plantilla.cumplimiento !== undefined ? plantilla.cumplimiento : (actual.cumplimiento || ""),
+    ...extra,
+  };
+  write(data);
+  return data.plantillasDocs[clave];
+};
+
+// ---------- Catálogo personalizado de hitos ----------
+export const listarCatalogoHitos = () => [...(read().catalogoHitos || [])];
+
+export const agregarCatalogoHito = (hito) => {
+  const data = read();
+  if (!Array.isArray(data.catalogoHitos)) data.catalogoHitos = [];
+  if (!String(hito?.nombre || "").trim()) return null;
+  const clave = `cat_${uid()}`;
+  const registro = {
+    id: uid(),
+    clave,
+    nombre: String(hito.nombre).trim(),
+    tipoObjeto: hito.tipoObjeto || "Obra",
+    etapaCodigo: hito.etapaCodigo || "1.1",
+    etapaNombre: hito.etapaNombre || "Contrato y expediente",
+    docs: [...new Set((hito.docs || []).map((d) => String(d).trim()).filter(Boolean))],
+    cumplimiento: hito.cumplimiento || "",
+    dias: Number(hito.dias || 0),
+    base: hito.base || "inicio",
+    habiles: hito.habiles !== false,
+    norma: hito.norma || "Ley 32069 y su Reglamento",
+    nota: hito.nota || "Hito agregado al catálogo personalizado.",
+    activo: hito.activo !== false,
+  };
+  data.catalogoHitos.push(registro);
+  if (!data.plantillasDocs || typeof data.plantillasDocs !== "object") data.plantillasDocs = {};
+  data.plantillasDocs[clave] = { docs: registro.docs, cumplimiento: registro.cumplimiento };
+  write(data);
+  return registro;
+};
+
+export const actualizarCatalogoHito = (id, cambios) => {
+  const data = read();
+  data.catalogoHitos = (data.catalogoHitos || []).map((h) => (h.id === id ? { ...h, ...cambios } : h));
+  const hito = data.catalogoHitos.find((h) => h.id === id);
+  if (hito && data.plantillasDocs) {
+    data.plantillasDocs[hito.clave] = {
+      ...(data.plantillasDocs[hito.clave] || {}),
+      docs: hito.docs || [],
+      cumplimiento: hito.cumplimiento || "",
+    };
+  }
+  write(data);
+  return hito || null;
+};
+
+export const actualizarCatalogoPorClave = (clave, cambios) => {
+  const hito = (read().catalogoHitos || []).find((h) => h.clave === clave);
+  return hito ? actualizarCatalogoHito(hito.id, cambios) : null;
+};
+
+export const eliminarCatalogoHito = (id) => {
+  const data = read();
+  const hito = (data.catalogoHitos || []).find((h) => h.id === id);
+  if (hito && data.plantillasDocs) delete data.plantillasDocs[hito.clave];
+  data.catalogoHitos = (data.catalogoHitos || []).filter((h) => h.id !== id);
+  write(data);
+};
+
+// ---------- Hitos opcionales ----------
+export const listarHitosOpcionales = (tipo) => listarHitosOpcionalesCatalogo(tipo);
+
+export const addHitoOpcional = (tramiteId, clave) => {
+  const data = read();
+  const tramite = data.tramites.find((t) => t.id === tramiteId);
+  if (!tramite) return null;
+  const modelo = listarHitosOpcionalesCatalogo(tramite.tipo_objeto).find((h) => h.clave === clave);
+  if (!modelo) return null;
+  const hermanos = data.items.filter(
+    (i) => i.tramite_id === tramiteId && i.seccionCodigo === modelo.etapaCodigo
+  );
+  const numeros = hermanos
+    .map((i) => Number(String(i.codigo || "").split(".").pop()))
+    .filter((n) => Number.isFinite(n));
+  const consecutivo = (numeros.length ? Math.max(...numeros) : 0) + 1;
+  const fechaBase = tramite.fecha_suscripcion || tramite.fecha_inicio || hoy();
+  const clavePlantilla = `opcional:${clave}`;
+  const plantilla = data.plantillasDocs?.[clavePlantilla];
+  return addItem(tramiteId, modelo.nombre, modelo.etapaNombre, {
+    codigo: `${modelo.etapaCodigo}.${consecutivo}`,
+    seccionCodigo: modelo.etapaCodigo,
+    seccionNombre: modelo.etapaNombre,
+    tipo: "opcional",
+    plantilla: clavePlantilla,
+    clavePlantilla,
+    docsRequeridos: plantilla?.docs || modelo.docs || [],
+    docCumplimiento: plantilla?.cumplimiento || "",
+    plazoDias: modelo.dias || 0,
+    plazoBase: modelo.base || "inicio",
+    plazoHabiles: modelo.habiles !== false,
+    fecha_limite: modelo.dias
+      ? (modelo.habiles !== false ? sumarHabiles(fechaBase, modelo.dias) : sumarDias(fechaBase, modelo.dias))
+      : "",
+    norma: modelo.norma || "",
+    nota: modelo.nota || "Hito opcional agregado al expediente.",
+  });
+};
+
+// ---------- SCTR: agregar meses ----------
+const MESES_LARGO = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
+const pad2 = (n) => String(n).padStart(2, "0");
+
+export const agregarMesSCTR = (tramiteId) => {
+  const data = read();
+  const tramite = data.tramites.find((t) => t.id === tramiteId);
+  if (!tramite) return null;
+  const sctr = ordenarTareas(
+    data.items.filter((i) => i.tramite_id === tramiteId && String(i.nombre || "").startsWith("SCTR"))
+  );
+  if (sctr.length === 0) return null;
+  const ultimo = sctr[sctr.length - 1];
+  const [anio, mes] = String(ultimo.periodo || "2026-01").split("-").map(Number);
+  const siguiente = new Date(anio || 2026, (mes || 1) - 1 + 1, 1);
+  const periodo = `${siguiente.getFullYear()}-${pad2(siguiente.getMonth() + 1)}`;
+  const baseNombre = String(ultimo.nombre).replace(/\s+\d+\s+—.*$/, "");
+  const numeros = sctr
+    .map((i) => Number(String(i.codigo || "").split(".").pop()))
+    .filter((n) => Number.isFinite(n));
+  const consecutivo = (numeros.length ? Math.max(...numeros) : 0) + 1;
+  const diaLimite = ultimo.diaLimite || 10;
+  const clave = ultimo.clavePlantilla || ultimo.seccionCodigo;
+  const plantilla = data.plantillasDocs?.[clave];
+  return addItem(tramiteId, `${baseNombre} ${pad2(consecutivo)} — ${MESES_LARGO[siguiente.getMonth()]} ${siguiente.getFullYear()}`, ultimo.etapaNombre, {
+    codigo: `${ultimo.seccionCodigo}.${consecutivo}`,
+    seccionCodigo: ultimo.seccionCodigo,
+    seccionNombre: ultimo.seccionNombre,
+    tipo: "recurrente",
+    plantilla: clave,
+    clavePlantilla: clave,
+    docsRequeridos: plantilla?.docs || ultimo.docsRequeridos || [],
+    docCumplimiento: plantilla?.cumplimiento || ultimo.docCumplimiento || "",
+    plazoDias: 0,
+    plazoBase: "manual",
+    plazoHabiles: true,
+    diaLimite,
+    frecuencia: "mensual",
+    periodo,
+    fecha_limite: `${periodo}-${pad2(diaLimite)}`,
+    norma: ultimo.norma || "",
+    nota: "Mes de SCTR agregado al expediente.",
+  });
+};
+
+// ---------- Cartas fianza ----------
+const PERIODOS_FIANZA = {
+  mensual: { meses: 1, etiqueta: "Mes" },
+  trimestral: { meses: 3, etiqueta: "Trimestre" },
+  semestral: { meses: 6, etiqueta: "Semestre" },
+  anual: { meses: 12, etiqueta: "Año" },
+};
+
+export const getConfigFianzas = (tramiteId) => {
+  const data = read();
+  return data.configFianzas?.[tramiteId] || { periodo: "anual", tipos: ["fiel_cumplimiento"] };
+};
+
+export const guardarConfigFianzas = (tramiteId, config) => {
+  const data = read();
+  const tramite = data.tramites.find((t) => t.id === tramiteId);
+  if (!tramite) return null;
+  const seccionCodigo = tramite.tipo_objeto === "Obra" ? "1.2.10" : "2.2.7";
+  const seccionNombre = "Renovaciones de carta fianza";
+  const etapaRef = data.items.find((i) => i.tramite_id === tramiteId && i.seccionCodigo === seccionCodigo);
+  const periodo = PERIODOS_FIANZA[config.periodo] ? config.periodo : "anual";
+  const tipos = Array.isArray(config.tipos) && config.tipos.length ? config.tipos : ["fiel_cumplimiento"];
+  const cfg = PERIODOS_FIANZA[periodo];
+
+  const inicio = new Date(`${tramite.fecha_inicio || hoy()}T12:00:00`);
+  const fin = new Date(`${tramite.fecha_fin || tramite.fecha_inicio || hoy()}T12:00:00`);
+  const totalMeses = Math.max(1, (fin.getFullYear() - inicio.getFullYear()) * 12 + (fin.getMonth() - inicio.getMonth()) + 1);
+  const cantidad = Math.max(1, Math.ceil(totalMeses / cfg.meses));
+
+  const anteriores = data.items.filter((i) => i.tramite_id === tramiteId && i.seccionCodigo === seccionCodigo);
+  const documentos = anteriores.map((i) => i.documentos || []);
+
+  const restantes = data.items.filter((i) => !(i.tramite_id === tramiteId && i.seccionCodigo === seccionCodigo));
+  const plantillaDocs = data.plantillasDocs?.[seccionCodigo]?.docs || [
+    "Carta fianza renovada", "Instrucción al banco", "Comprobante de emisión", "Carta de la entidad",
+  ];
+  const cumplimiento = data.plantillasDocs?.[seccionCodigo]?.cumplimiento || "Carta fianza renovada";
+  const etiquetas = {
+    fiel_cumplimiento: "de fiel cumplimiento",
+    adelanto_directo: "por adelanto directo",
+    adelanto_materiales: "por adelanto de materiales",
+    por_avance: "por avance",
+  };
+  const nuevas = [];
+  let n = 0;
+  for (const tipo of tipos) {
+    for (let i = 0; i < Math.min(cantidad, 12); i += 1) {
+      const hasta = new Date(inicio);
+      hasta.setMonth(inicio.getMonth() + (i + 1) * cfg.meses);
+      const limite = hasta > fin ? new Date(fin) : hasta;
+      const vence = sumarDias(limite.toISOString().slice(0, 10), -15);
+      nuevas.push({
+        id: uid(),
+        tramite_id: tramiteId,
+        codigo: `${seccionCodigo}.${n + 1}`,
+        nombre: `Renovación de carta fianza ${etiquetas[tipo] || tipo} — ${cfg.etiqueta} ${i + 1}`,
+        etapaCodigo: etapaRef?.etapaCodigo || seccionCodigo.split(".").slice(0, 2).join("."),
+        etapaNombre: etapaRef?.etapaNombre || "Inicio y aseguramiento",
+        seccionCodigo,
+        seccionNombre,
+        tipo: "recurrente",
+        plantilla: seccionCodigo,
+        clavePlantilla: seccionCodigo,
+        tipoFianza: tipo,
+        estado: "Pendiente",
+        responsable: "",
+        fecha: "",
+        fecha_limite: vence,
+        observacion: "",
+        docsRequeridos: [...plantillaDocs],
+        documentos: documentos[n] || [],
+        docCumplimiento: cumplimiento,
+        plazoDias: 15,
+        plazoBase: "manual",
+        plazoHabiles: false,
+        norma: "Ley 32069 y su Reglamento",
+        nota: "Renovación programada según el periodo configurado.",
+        recurrente: true,
+        periodo: `${cfg.etiqueta} ${i + 1}`,
+        diaLimite: 15,
+        frecuencia: periodo,
+      });
+      n += 1;
+    }
+  }
+  for (let i = nuevas.length; i < documentos.length; i += 1) {
+    for (const doc of documentos[i] || []) {
+      if (doc.archivoId) eliminarArchivo(doc.archivoId).catch(() => {});
+    }
+  }
+  data.items = ordenarTareas([...restantes, ...nuevas]);
+  if (!data.configFianzas || typeof data.configFianzas !== "object") data.configFianzas = {};
+  data.configFianzas[tramiteId] = { periodo, tipos };
+  write(data);
+  return { periodo, tipos };
+};
+
+// ---------- Reordenar hitos dentro de una sección ----------
+export const moverItem = (tramiteId, id, direccion) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === id && i.tramite_id === tramiteId);
+  if (!item) return false;
+  const hermanos = ordenarTareas(
+    data.items.filter((i) => i.tramite_id === tramiteId && i.seccionCodigo === item.seccionCodigo)
+  );
+  const idx = hermanos.findIndex((i) => i.id === id);
+  const otro = hermanos[idx + direccion];
+  if (!otro) return false;
+  const codigo = item.codigo;
+  item.codigo = otro.codigo;
+  otro.codigo = codigo;
+  data.items = ordenarTareas(data.items);
+  write(data);
+  return true;
+};
+
+// ---------- Resúmenes para panel y listados ----------
+export const resumenTramite = (tramiteId) => {
+  const tareas = listItems(tramiteId);
+  const aplicables = tareas.filter((t) => t.estado !== "No aplica");
+  const total = aplicables.length;
+  const completados = aplicables.filter((t) => t.estado === "Completado").length;
+  const observados = aplicables.filter((t) => t.estado === "Observado").length;
+  let docsRequeridos = 0;
+  let docsCargados = 0;
+  let requisitosPendientes = 0;
+  for (const t of aplicables) {
+    const reqs = t.docsRequeridos || [];
+    const docs = t.documentos || [];
+    docsRequeridos += reqs.length;
+    docsCargados += docs.length;
+    requisitosPendientes += reqs.filter((r) => !docs.some((d) => d.tipoDoc === r)).length;
+  }
+  return {
+    total,
+    completados,
+    observados,
+    pendientes: total - completados,
+    pct: total ? Math.round((completados / total) * 100) : 0,
+    docsRequeridos,
+    docsCargados,
+    requisitosPendientes,
+  };
+};
+
+export const listAllTareas = () => {
+  const data = read();
+  return data.tramites.flatMap((t) =>
+    data.items
+      .filter((i) => i.tramite_id === t.id)
+      .map((i) => ({ ...i, tramite_codigo: t.codigo, tramite_denominacion: t.denominacion }))
+  );
+};
+
+export const tareasConPlazo = () =>
+  listAllTareas()
+    .filter((t) => t.fecha_limite && t.estado !== "Completado" && t.estado !== "No aplica")
+    .sort((a, b) => a.fecha_limite.localeCompare(b.fecha_limite));
+
+export const estadoPlazo = (tarea) => {
+  if (!tarea?.fecha_limite) return "sin-plazo";
+  const dias = diasEntre(hoy(), tarea.fecha_limite);
+  if (dias < 0) return "vencido";
+  if (dias <= 7) return "por-vencer";
+  return "vigente";
+};
+
+export const exportarDatos = () => JSON.stringify(read(), null, 2);
+
+export const hoyISO = hoy;
+export const sumarDiasCalendario = sumarDias;
+export const etapasObra = ["Contrato y expediente", "Inicio y aseguramiento", "Ejecución de obra", "Recepción y liquidación"];
+export const etapasConsultoria = ["Contrato y expediente", "Inicio y equipo", "Ejecución del servicio", "Entregables y valorizaciones", "Recepción y liquidación"];
