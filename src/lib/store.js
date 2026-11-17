@@ -8,12 +8,22 @@ import {
   crearTareaEventual as crearTareaEventualCatalogo,
   listarEventuales as listarEventualesCatalogo,
   listarHitosOpcionales as listarHitosOpcionalesCatalogo,
-  plantillasPorDefecto,
+  catalogoSemilla,
+  completarPlantilla,
+  recorrerPlantillas,
+  ubicarPlantillas,
+  ubicarPorId,
+  aplicarCambiosPlantilla,
+  plantillaDesdeHitoPersonal,
+  seccionPara,
+  ambitoDe,
+  tipoDeAmbito,
+  AMBITOS,
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
 import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
 import { tienePermiso, veContrato, PERMISOS, ROLES } from "./permisos.js";
-import { migrarV6aV7, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia } from "./migracion.js";
+import { migrarV6aV7, fundirCatalogo, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia } from "./migracion.js";
 
 const KEY = "acrodocs_demo_v7";
 // Claves de versiones anteriores que se migran al leer. Hoy solo v6; la lógica
@@ -54,8 +64,8 @@ const seed = () => {
     version: 6,
     session: null,
     feriados: FERIADOS_2026,
-    plantillasDocs: plantillasPorDefecto(),
-    catalogoHitos: [],
+    // El catálogo se copia de la semilla una sola vez: sus ids quedan fijos.
+    catalogo: catalogoSemilla(),
     configFianzas: {},
     tramites: [
       {
@@ -94,7 +104,7 @@ const seed = () => {
   };
 
   const obra = marcar(
-    crearTareas(data.tramites[0], data.plantillasDocs, data.catalogoHitos, data.feriados),
+    crearTareas(data.tramites[0], data.catalogo, data.feriados),
     [
       "1.1.1", "1.1.2", "1.1.4", "1.1.5",
       "1.2.1", "1.2.2", "1.2.3", "1.2.5", "1.2.6", "1.2.7", "1.2.8", "1.2.9",
@@ -109,7 +119,7 @@ const seed = () => {
   if (sinAdelanto) sinAdelanto.estado = "No aplica";
 
   const consultoria = marcar(
-    crearTareas(data.tramites[1], data.plantillasDocs, data.catalogoHitos, data.feriados),
+    crearTareas(data.tramites[1], data.catalogo, data.feriados),
     [
       "2.1.1", "2.1.2", "2.1.3", "2.1.4", "2.1.5", "2.1.6", "2.1.7",
       "2.2.1", "2.2.2", "2.2.3", "2.2.4", "2.2.5", "2.2.6",
@@ -127,6 +137,7 @@ const seed = () => {
     data.tramites[0],
     "cambio_personal",
     obra,
+    data.catalogo,
     data.feriados
   );
   if (cambio) {
@@ -142,59 +153,6 @@ const seed = () => {
   return migrarV6aV7(data);
 };
 
-const migrar = (anterior) => {
-  const data = {
-    version: 6,
-    session: anterior?.session || null,
-    feriados: anterior?.feriados?.length ? anterior.feriados : FERIADOS_2026,
-    plantillasDocs: anterior?.plantillasDocs || plantillasPorDefecto(),
-    catalogoHitos: Array.isArray(anterior?.catalogoHitos) ? anterior.catalogoHitos : [],
-    configFianzas: anterior?.configFianzas || {},
-    tramites: Array.isArray(anterior?.tramites) ? anterior.tramites : [],
-    items: [],
-    ampliaciones: [],
-  };
-  const itemsViejos = Array.isArray(anterior?.items) ? anterior.items : [];
-  const ampsViejas = Array.isArray(anterior?.ampliaciones) ? anterior.ampliaciones : [];
-
-  for (const t of data.tramites) {
-    const previos = itemsViejos.filter((i) => i.tramite_id === t.id);
-    const mapa = new Map(previos.map((i) => [normalizar(i.nombre), i]));
-    const nuevas = crearTareas(t, data.plantillasDocs, data.catalogoHitos, data.feriados);
-    for (const tarea of nuevas) {
-      const viejo = mapa.get(normalizar(tarea.nombre));
-      if (viejo) {
-        tarea.estado = viejo.estado || tarea.estado;
-        tarea.responsable = viejo.responsable || "";
-        tarea.fecha = viejo.fecha || "";
-        tarea.observacion = viejo.observacion || "";
-      }
-    }
-    data.items.push(...nuevas);
-  }
-
-  // Las ampliaciones del modelo anterior pasan a ser trámites eventuales.
-  for (const amp of ampsViejas) {
-    const tramite = data.tramites.find((t) => t.id === amp.tramite_id);
-    if (!tramite) continue;
-    const existentes = data.items.filter((i) => i.tramite_id === tramite.id);
-    const tarea = crearTareaEventualCatalogo(tramite, "ampliacion", existentes, data.feriados);
-    if (!tarea) continue;
-    tarea.nombre = `Ampliación de plazo — ${amp.causal || "sin causal"}`;
-    tarea.estado = amp.estado === "Resuelta" ? "Completado" : "En revisión";
-    tarea.observacion = amp.sustento || "";
-    tarea.fecha_limite = amp.nuevo_fin || tarea.fecha_limite;
-    tarea.fecha = amp.fecha_solicitud || tarea.fecha;
-    data.items.push(tarea);
-    if (amp.dias_solicitados) {
-      tarea.observacion = `${tarea.observacion} Días solicitados: ${amp.dias_solicitados}.`.trim();
-    }
-  }
-
-  data.items = ordenarTareas(data.items);
-  return data;
-};
-
 let memoria = null;
 
 const read = () => {
@@ -204,8 +162,6 @@ const read = () => {
       const data = JSON.parse(raw);
       if (Number(data.version) >= 7) {
         if (!Array.isArray(data.feriados)) data.feriados = [...FERIADOS_2026];
-        if (!data.plantillasDocs || typeof data.plantillasDocs !== "object") data.plantillasDocs = plantillasPorDefecto();
-        if (!Array.isArray(data.catalogoHitos)) data.catalogoHitos = [];
         if (!data.configFianzas || typeof data.configFianzas !== "object") data.configFianzas = {};
         if (!Array.isArray(data.usuarios)) data.usuarios = copiarUsuariosDemo();
         if (!data.permisosRoles || typeof data.permisosRoles !== "object") data.permisosRoles = copiarMatrizInicial();
@@ -213,6 +169,14 @@ const read = () => {
         if (!data.empresa || typeof data.empresa !== "object") data.empresa = empresaVacia();
         if (!Array.isArray(data.movimientos)) data.movimientos = [];
         if (!Array.isArray(data.cargos)) data.cargos = [];
+        // Un v7 guardado antes del catálogo almacenado: se funde una vez y se
+        // guarda enseguida, para que los ids del catálogo no cambien entre lecturas.
+        if (!data.catalogo || typeof data.catalogo !== "object") {
+          data.catalogo = fundirCatalogo(data.plantillasDocs, data.catalogoHitos);
+          delete data.plantillasDocs;
+          delete data.catalogoHitos;
+          try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
+        }
         return data;
       }
     }
@@ -678,7 +642,7 @@ export const createTramite = (form) => {
     created_at: hoy(),
   };
   data.tramites.push(t);
-  data.items.push(...crearTareas(t, data.plantillasDocs, data.catalogoHitos, data.feriados));
+  data.items.push(...crearTareas(t, data.catalogo, data.feriados));
   data.configFianzas[t.id] = { periodo: "anual", tipos: ["fiel_cumplimiento"] };
   write(data);
   return t;
@@ -889,109 +853,282 @@ export const addTareaEventual = (tramiteId, clave) => {
   const tramite = data.tramites.find((t) => t.id === tramiteId);
   if (!tramite) return null;
   const existentes = data.items.filter((i) => i.tramite_id === tramiteId);
-  const tarea = crearTareaEventualCatalogo(tramite, clave, existentes, data.feriados);
+  const tarea = crearTareaEventualCatalogo(tramite, clave, existentes, data.catalogo, data.feriados);
   if (!tarea) return null;
   data.items.push(tarea);
   write(data);
   return tarea;
 };
 
-export const listarEventuales = (tipo) => listarEventualesCatalogo(tipo);
+// ---------- Catálogo almacenado (§5.4) ----------
+// `data.catalogo` es la única fuente de los hitos de los contratos nuevos (ver
+// la forma en catalogo.js). Leerlo basta con tener sesión; todo cambio exige
+// `catalogo` y queda en el historial (objeto "catalogo") en la misma escritura.
+// Los cambios nunca tocan los hitos ya creados en contratos existentes.
+const clonar = (valor) => JSON.parse(JSON.stringify(valor));
 
-// ---------- Plantillas de documentos ----------
-export const getPlantilla = (clave) => {
-  const plantillas = read().plantillasDocs || {};
-  return plantillas[clave] || null;
+const MSG_CATALOGO_INVALIDO = "El catálogo no tiene la forma esperada.";
+
+const ETIQUETAS_CAMPO = {
+  docs: "documentos requeridos",
+  cumplimiento: "documento de cumplimiento",
+  nombre: "nombre",
+  plazoDias: "plazo",
+  plazoBase: "base del plazo",
+  plazoHabiles: "días hábiles o calendario",
+  norma: "norma",
+  nota: "nota",
+  activo: "activo",
+  ubicacion: "etapa",
 };
 
+const describirCampos = (campos) => [...new Set(campos)].map((c) => ETIQUETAS_CAMPO[c] || c).join(", ");
+
+const anotarCatalogo = (data, accion, objetoId, detalle) =>
+  anotarHistorial(data, { accion, objeto: "catalogo", objetoId, detalle });
+
+// Deja el catálogo con la forma que se guarda: ids en etapas, secciones y
+// plantillas (los existentes se conservan) y los valores por defecto de cada
+// plantilla (activo, verificado:false, pasos:[], plazoLevantamiento:null).
+const normalizarCatalogo = (entrada) => {
+  if (!entrada || typeof entrada !== "object") throw new Error(MSG_CATALOGO_INVALIDO);
+  const cat = clonar(entrada);
+  for (const ambito of AMBITOS) {
+    const arbol = cat[ambito];
+    if (!arbol || typeof arbol !== "object" || !Array.isArray(arbol.etapas)) throw new Error(MSG_CATALOGO_INVALIDO);
+    for (const etapa of arbol.etapas) {
+      etapa.id = etapa.id || uid();
+      etapa.secciones = Array.isArray(etapa.secciones) ? etapa.secciones : [];
+      for (const seccion of etapa.secciones) {
+        seccion.id = seccion.id || uid();
+        if (seccion.recurrente) {
+          seccion.plantilla = completarPlantilla({ clave: seccion.codigo, nombre: seccion.nombre, ...(seccion.plantilla || {}) });
+        } else {
+          seccion.hitos = (Array.isArray(seccion.hitos) ? seccion.hitos : []).map(completarPlantilla);
+        }
+      }
+    }
+  }
+  for (const grupo of ["eventuales", "opcionales"]) {
+    const origen = cat[grupo] && typeof cat[grupo] === "object" ? cat[grupo] : {};
+    cat[grupo] = Object.fromEntries(AMBITOS.map((a) => [a, (Array.isArray(origen[a]) ? origen[a] : []).map(completarPlantilla)]));
+  }
+  return cat;
+};
+
+export const getCatalogo = () => {
+  const data = read();
+  if (!usuarioActual(data)) throw new Error("Inicia sesión para ver el catálogo.");
+  return clonar(data.catalogo);
+};
+
+// Reemplaza el catálogo completo (lo usará el editor de la tarea 7).
+export const guardarCatalogo = (catalogo, detalle) => {
+  const data = read();
+  exigirEn(data, "catalogo");
+  data.catalogo = normalizarCatalogo(catalogo);
+  anotarCatalogo(data, "editar", "catalogo", String(detalle || "").trim() || "Catálogo actualizado.");
+  write(data);
+  return clonar(data.catalogo);
+};
+
+// Inserta un hito de la semilla en su sección actual, antes del primer hito con
+// un código mayor, para que vuelva a su lugar.
+const reinsertarHito = (arbol, original) => {
+  const exacta = arbol.etapas.flatMap((e) => e.secciones || []).find((s) => s.codigo === original.seccion.codigo && !s.recurrente);
+  const seccion = exacta || seccionPara(arbol, original.etapa.codigo, original.etapa.nombre).seccion;
+  const comparar = (a, b) => String(a).localeCompare(String(b), "es", { numeric: true });
+  const indice = seccion.hitos.findIndex((h) => /^\d+(\.\d+)+$/.test(h.clave) && comparar(h.clave, original.plantilla.clave) > 0);
+  if (indice === -1) seccion.hitos.push(original.plantilla);
+  else seccion.hitos.splice(indice, 0, original.plantilla);
+};
+
+const reinsertarSeccion = (arbol, original) => {
+  let etapa = arbol.etapas.find((e) => e.codigo === original.etapa.codigo);
+  if (!etapa) {
+    etapa = { id: uid(), codigo: original.etapa.codigo, nombre: original.etapa.nombre, secciones: [] };
+    arbol.etapas.push(etapa);
+  }
+  etapa.secciones.push(original.seccion);
+};
+
+// Sin `ruta`: vuelve a la semilla completa (los hitos propios se pierden).
+// Con `ruta`: es la clave de una plantilla, la misma que usa `guardarPlantilla`
+// (código del hito o de la sección recurrente, "eventual:<clave>" u
+// "opcional:<clave>"). Restaura solo esa plantilla desde la semilla, con el id
+// que ya tenía; si se había quitado, la devuelve a su sección. Una clave de
+// eventual presente en los dos tipos de contrato se restaura en ambos.
+export const restaurarCatalogo = (ruta) => {
+  const data = read();
+  exigirEn(data, "catalogo");
+  if (ruta === undefined || ruta === null || ruta === "") {
+    data.catalogo = catalogoSemilla();
+    anotarCatalogo(data, "restaurar", "catalogo", "Se restauró el catálogo original completo.");
+    write(data);
+    return clonar(data.catalogo);
+  }
+  const originales = ubicarPlantillas(catalogoSemilla(), ruta);
+  if (originales.length === 0) throw new Error("Este hito no existe en el catálogo original.");
+  for (const original of originales) {
+    const actuales = ubicarPlantillas(data.catalogo, ruta)
+      .filter((u) => u.tipo === original.tipo && u.ambito === original.ambito);
+    if (actuales.length === 0) {
+      if (original.tipo === "hito") reinsertarHito(data.catalogo[original.ambito], original);
+      else if (original.tipo === "recurrente") reinsertarSeccion(data.catalogo[original.ambito], original);
+      else data.catalogo[original.tipo === "eventual" ? "eventuales" : "opcionales"][original.ambito].push(original.plantilla);
+      continue;
+    }
+    for (const u of actuales) {
+      const restaurada = { ...clonar(original.plantilla), id: u.plantilla.id };
+      if (u.tipo === "recurrente") {
+        u.seccion.recurrente = original.seccion.recurrente;
+        u.seccion.diaLimite = original.seccion.diaLimite;
+        u.seccion.soloPrimerPeriodo = original.seccion.soloPrimerPeriodo;
+        u.seccion.plantilla = restaurada;
+      } else {
+        u.lista[u.lista.indexOf(u.plantilla)] = restaurada;
+      }
+    }
+  }
+  const { plantilla } = originales[0];
+  anotarCatalogo(data, "restaurar", ruta, `Se restauró «${plantilla.nombre}» (${ruta}) del catálogo original.`);
+  write(data);
+  return clonar(data.catalogo);
+};
+
+// ---------- Plantillas: funciones anteriores, ahora sobre el catálogo ----------
+const plantillaRecurrente = (data, clave) =>
+  ubicarPlantillas(data.catalogo, clave).find((u) => u.tipo === "recurrente")?.plantilla || null;
+
+export const getPlantilla = (clave) => {
+  const [u] = ubicarPlantillas(read().catalogo, clave);
+  return u ? clonar(u.plantilla) : null;
+};
+
+// Edita la plantilla de una clave desde un hito del expediente. En un hito fijo
+// acepta docs, cumplimiento, nombre, plazo, norma y nota; en una sección
+// recurrente solo docs, cumplimiento y norma; en eventuales y opcionales, docs
+// y cumplimiento. Una clave sin plantilla en el catálogo devuelve null.
 export const guardarPlantilla = (clave, plantilla) => {
   if (!clave) return null;
   const data = read();
-  if (!data.plantillasDocs || typeof data.plantillasDocs !== "object") data.plantillasDocs = {};
-  const actual = data.plantillasDocs[clave] || {};
-  const extra = {};
-  for (const campo of ["nombre", "plazoBase", "norma", "nota"]) {
-    if (plantilla[campo] !== undefined) extra[campo] = plantilla[campo];
+  exigirEn(data, "catalogo");
+  const ubicaciones = ubicarPlantillas(data.catalogo, clave);
+  if (ubicaciones.length === 0) return null;
+  const campos = ubicaciones.flatMap((u) => aplicarCambiosPlantilla(u, plantilla || {}));
+  const principal = ubicaciones[0].plantilla;
+  if (campos.length > 0) {
+    anotarCatalogo(data, "editar", principal.id, `Plantilla «${principal.nombre}» (${clave}): cambió ${describirCampos(campos)}.`);
+    write(data);
   }
-  if (plantilla.plazoDias !== undefined) extra.plazoDias = Number(plantilla.plazoDias) || 0;
-  if (plantilla.plazoHabiles !== undefined) extra.plazoHabiles = plantilla.plazoHabiles !== false;
-  data.plantillasDocs[clave] = {
-    ...actual,
-    docs: [...new Set((plantilla.docs || actual.docs || []).map((d) => String(d).trim()).filter(Boolean))],
-    cumplimiento: plantilla.cumplimiento !== undefined ? plantilla.cumplimiento : (actual.cumplimiento || ""),
-    ...extra,
-  };
-  write(data);
-  return data.plantillasDocs[clave];
+  return clonar(principal);
 };
 
-// ---------- Catálogo personalizado de hitos ----------
-export const listarCatalogoHitos = () => [...(read().catalogoHitos || [])];
+// Vista con la forma del catálogo personalizado anterior (Configuración la usa).
+const vistaHito = (u) => ({
+  ...clonar(u.plantilla),
+  tipoObjeto: tipoDeAmbito(u.ambito),
+  etapaCodigo: u.etapa?.codigo || "",
+  etapaNombre: u.etapa?.nombre || "",
+  seccionCodigo: u.seccion?.codigo || "",
+  dias: u.plantilla.plazoDias,
+  base: u.plantilla.plazoBase,
+  habiles: u.plantilla.plazoHabiles,
+});
 
+const conAlias = (p) => ({ ...clonar(p), dias: p.plazoDias, habiles: p.plazoHabiles, base: p.plazoBase });
+
+// Hitos propios del catálogo (claves `cat_…`) de ambos tipos de contrato.
+export const listarCatalogoHitos = () => {
+  const salida = [];
+  recorrerPlantillas(read().catalogo, (u) => {
+    if (u.tipo === "hito" && String(u.plantilla.clave).startsWith("cat_")) salida.push(vistaHito(u));
+  });
+  return salida;
+};
+
+// `hito` usa los nombres anteriores: nombre, tipoObjeto, etapaCodigo,
+// etapaNombre, docs, cumplimiento, dias, base, habiles, norma, nota, activo.
 export const agregarCatalogoHito = (hito) => {
   const data = read();
-  if (!Array.isArray(data.catalogoHitos)) data.catalogoHitos = [];
+  exigirEn(data, "catalogo");
   if (!String(hito?.nombre || "").trim()) return null;
-  const clave = `cat_${uid()}`;
-  const registro = {
-    id: uid(),
-    clave,
-    nombre: String(hito.nombre).trim(),
-    tipoObjeto: hito.tipoObjeto || "Obra",
-    etapaCodigo: hito.etapaCodigo || "1.1",
-    etapaNombre: hito.etapaNombre || "Contrato y expediente",
-    docs: [...new Set((hito.docs || []).map((d) => String(d).trim()).filter(Boolean))],
-    cumplimiento: hito.cumplimiento || "",
-    dias: Number(hito.dias || 0),
-    base: hito.base || "inicio",
-    habiles: hito.habiles !== false,
-    norma: hito.norma || "Ley 32069 y su Reglamento",
-    nota: hito.nota || "Hito agregado al catálogo personalizado.",
-    activo: hito.activo !== false,
-  };
-  data.catalogoHitos.push(registro);
-  if (!data.plantillasDocs || typeof data.plantillasDocs !== "object") data.plantillasDocs = {};
-  data.plantillasDocs[clave] = { docs: registro.docs, cumplimiento: registro.cumplimiento };
+  const ambito = ambitoDe(hito.tipoObjeto || "Obra");
+  const arbol = data.catalogo[ambito];
+  const plantilla = plantillaDesdeHitoPersonal({ ...hito, id: undefined, clave: undefined });
+  const primera = arbol.etapas[0];
+  const { etapa, seccion } = seccionPara(arbol, hito.etapaCodigo || primera?.codigo, hito.etapaNombre || primera?.nombre);
+  seccion.hitos.push(plantilla);
+  anotarCatalogo(data, "agregar", plantilla.id, `Hito «${plantilla.nombre}» agregado al catálogo de ${tipoDeAmbito(ambito)} en ${etapa.codigo} ${etapa.nombre}.`);
   write(data);
-  return registro;
+  return vistaHito({ ambito, etapa, seccion, plantilla });
 };
 
-export const actualizarCatalogoHito = (id, cambios) => {
+// Edita cualquier plantilla por id. Acepta los nombres anteriores (dias, base,
+// habiles) y los nuevos (plazoDias, plazoBase, plazoHabiles). En un hito, un
+// `tipoObjeto` o `etapaCodigo` distinto lo mueve al final de esa etapa.
+export const actualizarCatalogoHito = (id, cambios = {}) => {
   const data = read();
-  data.catalogoHitos = (data.catalogoHitos || []).map((h) => (h.id === id ? { ...h, ...cambios } : h));
-  const hito = data.catalogoHitos.find((h) => h.id === id);
-  if (hito && data.plantillasDocs) {
-    data.plantillasDocs[hito.clave] = {
-      ...(data.plantillasDocs[hito.clave] || {}),
-      docs: hito.docs || [],
-      cumplimiento: hito.cumplimiento || "",
-    };
+  exigirEn(data, "catalogo");
+  const u = ubicarPorId(data.catalogo, id);
+  if (!u) return null;
+  const c = { ...cambios };
+  if (c.dias !== undefined && c.plazoDias === undefined) c.plazoDias = c.dias;
+  if (c.base !== undefined && c.plazoBase === undefined) c.plazoBase = c.base;
+  if (c.habiles !== undefined && c.plazoHabiles === undefined) c.plazoHabiles = c.habiles;
+  const campos = aplicarCambiosPlantilla(u, c);
+  if (c.activo !== undefined && Boolean(c.activo) !== (u.plantilla.activo !== false)) {
+    u.plantilla.activo = Boolean(c.activo);
+    campos.push("activo");
   }
-  write(data);
-  return hito || null;
+  if (u.tipo === "hito" && (c.tipoObjeto !== undefined || c.etapaCodigo !== undefined)) {
+    const ambitoDestino = c.tipoObjeto !== undefined ? ambitoDe(c.tipoObjeto) : u.ambito;
+    const etapaDestino = c.etapaCodigo || u.etapa.codigo;
+    if (ambitoDestino !== u.ambito || etapaDestino !== u.etapa.codigo) {
+      u.lista.splice(u.lista.indexOf(u.plantilla), 1);
+      seccionPara(data.catalogo[ambitoDestino], etapaDestino, c.etapaNombre).seccion.hitos.push(u.plantilla);
+      campos.push("ubicacion");
+    }
+  }
+  if (campos.length > 0) {
+    anotarCatalogo(data, "editar", id, `Hito «${u.plantilla.nombre}»: cambió ${describirCampos(campos)}.`);
+    write(data);
+  }
+  const final = ubicarPorId(data.catalogo, id);
+  return final.tipo === "hito" ? vistaHito(final) : conAlias(final.plantilla);
 };
 
 export const actualizarCatalogoPorClave = (clave, cambios) => {
-  const hito = (read().catalogoHitos || []).find((h) => h.clave === clave);
-  return hito ? actualizarCatalogoHito(hito.id, cambios) : null;
+  const data = read();
+  exigirEn(data, "catalogo");
+  const [u] = ubicarPlantillas(data.catalogo, clave);
+  return u ? actualizarCatalogoHito(u.plantilla.id, cambios) : null;
 };
 
+// Quita un hito, eventual u opcional del catálogo. Las secciones recurrentes no
+// se quitan por aquí (se desactivan o se editan en el catálogo completo).
 export const eliminarCatalogoHito = (id) => {
   const data = read();
-  const hito = (data.catalogoHitos || []).find((h) => h.id === id);
-  if (hito && data.plantillasDocs) delete data.plantillasDocs[hito.clave];
-  data.catalogoHitos = (data.catalogoHitos || []).filter((h) => h.id !== id);
+  exigirEn(data, "catalogo");
+  const u = ubicarPorId(data.catalogo, id);
+  if (!u || !u.lista) return false;
+  u.lista.splice(u.lista.indexOf(u.plantilla), 1);
+  anotarCatalogo(data, "eliminar", id, `«${u.plantilla.nombre}» quitado del catálogo de ${tipoDeAmbito(u.ambito)}.`);
   write(data);
+  return true;
 };
 
-// ---------- Hitos opcionales ----------
-export const listarHitosOpcionales = (tipo) => listarHitosOpcionalesCatalogo(tipo);
+// Eventuales y opcionales activos, con los alias anteriores (dias, habiles, base).
+export const listarEventuales = (tipo) => listarEventualesCatalogo(tipo, read().catalogo).map(conAlias);
 
+export const listarHitosOpcionales = (tipo) => listarHitosOpcionalesCatalogo(tipo, read().catalogo).map(conAlias);
+
+// ---------- Hitos opcionales ----------
 export const addHitoOpcional = (tramiteId, clave) => {
   const data = read();
   const tramite = data.tramites.find((t) => t.id === tramiteId);
   if (!tramite) return null;
-  const modelo = listarHitosOpcionalesCatalogo(tramite.tipo_objeto).find((h) => h.clave === clave);
+  const modelo = listarHitosOpcionalesCatalogo(tramite.tipo_objeto, data.catalogo).find((h) => h.clave === clave);
   if (!modelo) return null;
   const hermanos = data.items.filter(
     (i) => i.tramite_id === tramiteId && i.seccionCodigo === modelo.etapaCodigo
@@ -1002,7 +1139,6 @@ export const addHitoOpcional = (tramiteId, clave) => {
   const consecutivo = (numeros.length ? Math.max(...numeros) : 0) + 1;
   const fechaBase = tramite.fecha_suscripcion || tramite.fecha_inicio || hoy();
   const clavePlantilla = `opcional:${clave}`;
-  const plantilla = data.plantillasDocs?.[clavePlantilla];
   return addItem(tramiteId, modelo.nombre, modelo.etapaNombre, {
     codigo: `${modelo.etapaCodigo}.${consecutivo}`,
     seccionCodigo: modelo.etapaCodigo,
@@ -1010,13 +1146,13 @@ export const addHitoOpcional = (tramiteId, clave) => {
     tipo: "opcional",
     plantilla: clavePlantilla,
     clavePlantilla,
-    docsRequeridos: plantilla?.docs || modelo.docs || [],
-    docCumplimiento: plantilla?.cumplimiento || "",
-    plazoDias: modelo.dias || 0,
-    plazoBase: modelo.base || "inicio",
-    plazoHabiles: modelo.habiles !== false,
-    fecha_limite: modelo.dias
-      ? (modelo.habiles !== false ? sumarHabiles(fechaBase, modelo.dias, data.feriados) : sumarDias(fechaBase, modelo.dias))
+    docsRequeridos: [...(modelo.docs || [])],
+    docCumplimiento: modelo.cumplimiento || "",
+    plazoDias: modelo.plazoDias || 0,
+    plazoBase: modelo.plazoBase || "inicio",
+    plazoHabiles: modelo.plazoHabiles !== false,
+    fecha_limite: modelo.plazoDias
+      ? (modelo.plazoHabiles !== false ? sumarHabiles(fechaBase, modelo.plazoDias, data.feriados) : sumarDias(fechaBase, modelo.plazoDias))
       : "",
     norma: modelo.norma || "",
     nota: modelo.nota || "Hito opcional agregado al expediente.",
@@ -1046,7 +1182,7 @@ export const agregarMesSCTR = (tramiteId) => {
   const consecutivo = (numeros.length ? Math.max(...numeros) : 0) + 1;
   const diaLimite = ultimo.diaLimite || 10;
   const clave = ultimo.clavePlantilla || ultimo.seccionCodigo;
-  const plantilla = data.plantillasDocs?.[clave];
+  const plantilla = plantillaRecurrente(data, clave);
   return addItem(tramiteId, `${baseNombre} ${pad2(consecutivo)} — ${MESES_LARGO[siguiente.getMonth()]} ${siguiente.getFullYear()}`, ultimo.etapaNombre, {
     codigo: `${ultimo.seccionCodigo}.${consecutivo}`,
     seccionCodigo: ultimo.seccionCodigo,
@@ -1101,10 +1237,11 @@ export const guardarConfigFianzas = (tramiteId, config) => {
   const documentos = anteriores.map((i) => i.documentos || []);
 
   const restantes = data.items.filter((i) => !(i.tramite_id === tramiteId && i.seccionCodigo === seccionCodigo));
-  const plantillaDocs = data.plantillasDocs?.[seccionCodigo]?.docs || [
+  const plantillaFianza = plantillaRecurrente(data, seccionCodigo);
+  const plantillaDocs = plantillaFianza?.docs || [
     "Carta fianza renovada", "Instrucción al banco", "Comprobante de emisión", "Carta de la entidad",
   ];
-  const cumplimiento = data.plantillasDocs?.[seccionCodigo]?.cumplimiento || "Carta fianza renovada";
+  const cumplimiento = plantillaFianza?.cumplimiento || "Carta fianza renovada";
   const etiquetas = {
     fiel_cumplimiento: "de fiel cumplimiento",
     adelanto_directo: "por adelanto directo",

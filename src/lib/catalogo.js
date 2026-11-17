@@ -341,6 +341,8 @@ export const EVENTUALES = {
 
 export const esConsultoria = (tipo) => String(tipo || "").toLowerCase().includes("consultor");
 
+// Árbol fijo de la semilla. Solo para listas de etapas en la interfaz: la
+// generación de hitos lee siempre el catálogo almacenado (`data.catalogo`).
 export const catalogoDe = (tipo) => (esConsultoria(tipo) ? CONSULTORIA : OBRA);
 
 const calcularVence = (tramite, plantilla, feriados) => {
@@ -372,7 +374,7 @@ const crearTarea = (tramite, etapa, seccion, plantilla, extra = {}) => ({
   fecha: "",
   fecha_limite: "",
   observacion: "",
-  docsRequeridos: plantilla.docs || [],
+  docsRequeridos: [...(plantilla.docs || [])],
   documentos: [],
   plazoDias: plantilla.plazoDias || 0,
   plazoBase: plantilla.plazoBase || "inicio",
@@ -384,27 +386,291 @@ const crearTarea = (tramite, etapa, seccion, plantilla, extra = {}) => ({
   ...extra,
 });
 
-export const crearTareas = (tramite, plantillasDocs = {}, catalogoHitos = [], feriados) => {
-  const catalogo = catalogoDe(tramite.tipo_objeto);
+// ------------------------ CATÁLOGO ALMACENADO ------------------------
+// OBRA, CONSULTORIA, EVENTUALES y HITOS_OPCIONALES son solo la semilla (§5.4).
+// `catalogoSemilla()` las convierte en un objeto serializable que se guarda en
+// `data.catalogo`; desde ahí se generan los hitos de los contratos nuevos.
+//
+// Catalogo  = { obra: Arbol, consultoria: Arbol,
+//               eventuales: { obra: Plantilla[], consultoria: Plantilla[] },
+//               opcionales: { obra: Plantilla[], consultoria: Plantilla[] } }
+// Arbol     = { codigo, nombre, etapas: [{ id, codigo, nombre, secciones: [{ id, codigo, nombre,
+//               recurrente?, diaLimite?, soloPrimerPeriodo?, plantilla?: Plantilla, hitos?: Plantilla[] }] }] }
+// Plantilla = { id, clave, nombre, docs, cumplimiento, plazoDias, plazoBase, plazoHabiles, norma,
+//               nota, activo, verificado, pasos, plazoLevantamiento, silencioPositivo?, diasSilencio? }
+// Los opcionales llevan además `etapaCodigo` y `etapaNombre` (dónde se agregan).
+
+export const AMBITOS = ["obra", "consultoria"];
+export const ambitoDe = (tipo) => (esConsultoria(tipo) ? "consultoria" : "obra");
+export const tipoDeAmbito = (ambito) => (ambito === "consultoria" ? "Consultoría de obra" : "Obra");
+
+// Completa una plantilla con los valores por defecto sin perder campos extra.
+// Conserva el `id` si ya lo tiene: los ids se generan una sola vez.
+export const completarPlantilla = (p = {}) => ({
+  ...p,
+  id: p.id || uid(),
+  clave: String(p.clave ?? ""),
+  nombre: String(p.nombre ?? ""),
+  docs: Array.isArray(p.docs) ? [...p.docs] : [],
+  cumplimiento: p.cumplimiento || "",
+  plazoDias: Number(p.plazoDias || 0),
+  plazoBase: p.plazoBase || "inicio",
+  plazoHabiles: p.plazoHabiles !== false,
+  norma: p.norma ?? "",
+  nota: p.nota ?? "",
+  activo: p.activo !== false,
+  verificado: p.verificado === true,
+  pasos: Array.isArray(p.pasos) ? [...p.pasos] : [],
+  plazoLevantamiento: p.plazoLevantamiento ?? null,
+});
+
+const desdeT = (clave, t) => completarPlantilla({
+  clave,
+  nombre: t.nombre,
+  docs: t.docs,
+  cumplimiento: t.cumplimiento,
+  plazoDias: t.plazoDias,
+  plazoBase: t.plazoBase,
+  plazoHabiles: t.plazoHabiles,
+  norma: t.norma,
+  nota: t.nota,
+});
+
+const arbolSemilla = (fuente) => ({
+  codigo: fuente.codigo,
+  nombre: fuente.nombre,
+  etapas: fuente.etapas.map((etapa) => ({
+    id: uid(),
+    codigo: etapa.codigo,
+    nombre: etapa.nombre,
+    secciones: etapa.secciones.map((s) => (s.recurrente
+      ? {
+        id: uid(),
+        codigo: s.codigo,
+        nombre: s.nombre,
+        recurrente: s.recurrente,
+        diaLimite: s.diaLimite,
+        soloPrimerPeriodo: Boolean(s.soloPrimerPeriodo),
+        plantilla: desdeT(s.codigo, s.plantilla),
+      }
+      : { id: uid(), codigo: s.codigo, nombre: s.nombre, hitos: s.tareas.map((t) => desdeT(t.codigo, t)) })),
+  })),
+});
+
+const eventualSemilla = (e) => completarPlantilla({
+  clave: e.clave,
+  nombre: e.nombre,
+  docs: e.docs,
+  cumplimiento: "",
+  plazoDias: e.dias || 0,
+  plazoBase: "manual",
+  plazoHabiles: e.habiles !== false,
+  norma: e.norma || "",
+  nota: "Trámite eventual agregado al expediente. No se crea automáticamente.",
+  silencioPositivo: Boolean(e.silencioPositivo),
+  diasSilencio: e.dias || 0,
+});
+
+const opcionalSemilla = (o) => completarPlantilla({
+  clave: o.clave,
+  nombre: o.nombre,
+  docs: o.docs,
+  cumplimiento: "",
+  plazoDias: o.dias || 0,
+  plazoBase: o.base || "inicio",
+  plazoHabiles: o.habiles !== false,
+  norma: o.norma || "",
+  nota: o.nota || "Hito opcional agregado al expediente.",
+  etapaCodigo: o.etapaCodigo,
+  etapaNombre: o.etapaNombre,
+});
+
+// Cada llamada arma objetos nuevos con ids nuevos. Quien la copie a los datos
+// guarda esos ids y no vuelve a llamarla para lo mismo.
+export const catalogoSemilla = () => ({
+  obra: arbolSemilla(OBRA),
+  consultoria: arbolSemilla(CONSULTORIA),
+  eventuales: {
+    obra: EVENTUALES.Obra.map(eventualSemilla),
+    consultoria: EVENTUALES["Consultoría de obra"].map(eventualSemilla),
+  },
+  opcionales: {
+    obra: HITOS_OPCIONALES.Obra.map(opcionalSemilla),
+    consultoria: HITOS_OPCIONALES["Consultoría de obra"].map(opcionalSemilla),
+  },
+});
+
+// Recorre todas las plantillas del catálogo. `tipo` es "hito", "recurrente",
+// "eventual" u "opcional"; `lista` es el arreglo que contiene la plantilla
+// (para hitos, eventuales y opcionales) y `seccion`/`etapa` su lugar en el árbol.
+export const recorrerPlantillas = (catalogo, fn) => {
+  for (const ambito of AMBITOS) {
+    for (const etapa of catalogo?.[ambito]?.etapas || []) {
+      for (const seccion of etapa.secciones || []) {
+        if (seccion.recurrente) {
+          if (seccion.plantilla) fn({ tipo: "recurrente", ambito, etapa, seccion, plantilla: seccion.plantilla });
+        } else {
+          for (const plantilla of seccion.hitos || []) {
+            fn({ tipo: "hito", ambito, etapa, seccion, lista: seccion.hitos, plantilla });
+          }
+        }
+      }
+    }
+    for (const plantilla of catalogo?.eventuales?.[ambito] || []) {
+      fn({ tipo: "eventual", ambito, lista: catalogo.eventuales[ambito], plantilla });
+    }
+    for (const plantilla of catalogo?.opcionales?.[ambito] || []) {
+      fn({ tipo: "opcional", ambito, lista: catalogo.opcionales[ambito], plantilla });
+    }
+  }
+};
+
+// Ubica las plantillas de una clave. Acepta las claves antiguas de
+// plantillasDocs: "eventual:<clave>" y "opcional:<clave>". Una clave de eventual
+// puede estar en los dos ámbitos (por ejemplo "ampliacion").
+export const ubicarPlantillas = (catalogo, clave) => {
+  const texto = String(clave || "");
+  let tipos = ["hito", "recurrente"];
+  let buscada = texto;
+  if (texto.startsWith("eventual:")) { tipos = ["eventual"]; buscada = texto.slice(9); }
+  else if (texto.startsWith("opcional:")) { tipos = ["opcional"]; buscada = texto.slice(9); }
+  const salida = [];
+  if (!buscada) return salida;
+  recorrerPlantillas(catalogo, (u) => {
+    if (tipos.includes(u.tipo) && u.plantilla.clave === buscada) salida.push(u);
+  });
+  return salida;
+};
+
+export const ubicarPorId = (catalogo, id) => {
+  let encontrada = null;
+  recorrerPlantillas(catalogo, (u) => { if (!encontrada && u.plantilla.id === id) encontrada = u; });
+  return encontrada;
+};
+
+// Campos que cada tipo de plantilla acepta al editarse "desde un hito" (modal
+// del expediente o plantillasDocs antiguas). En una sección recurrente el nombre
+// y el plazo del periodo no son de la plantilla, igual que antes.
+const CAMPOS_POR_TIPO = {
+  hito: ["docs", "cumplimiento", "nombre", "plazoDias", "plazoBase", "plazoHabiles", "norma", "nota"],
+  recurrente: ["docs", "cumplimiento", "norma"],
+  eventual: ["docs", "cumplimiento"],
+  opcional: ["docs", "cumplimiento"],
+};
+
+export const limpiarDocs = (docs) => [...new Set((docs || []).map((d) => String(d).trim()).filter(Boolean))];
+
+// Aplica `cambios` sobre la plantilla ubicada y devuelve la lista de campos que
+// cambiaron de verdad. Muta la plantilla.
+export const aplicarCambiosPlantilla = (ubicacion, cambios = {}) => {
+  const p = ubicacion.plantilla;
+  const cambiados = [];
+  for (const campo of CAMPOS_POR_TIPO[ubicacion.tipo] || []) {
+    if (cambios[campo] === undefined) continue;
+    let valor = cambios[campo];
+    if (campo === "docs") {
+      if (!Array.isArray(valor)) continue;
+      valor = limpiarDocs(valor);
+    } else if (campo === "plazoDias") valor = Number(valor) || 0;
+    else if (campo === "plazoHabiles") valor = valor !== false;
+    if (JSON.stringify(p[campo]) !== JSON.stringify(valor)) {
+      p[campo] = valor;
+      cambiados.push(campo);
+    }
+  }
+  return cambiados;
+};
+
+// Sección donde se inserta un hito agregado "a una etapa" (modelo anterior de
+// catalogoHitos): la sección con ese código; si no hay, la última sección no
+// recurrente de la etapa con ese código; si la etapa no tiene ninguna, se le
+// agrega una; si la etapa no existe (por ejemplo "P", hitos propios), se crea
+// al final del árbol. Muta el árbol cuando crea algo.
+export const seccionPara = (arbol, etapaCodigo, etapaNombre) => {
+  const codigo = String(etapaCodigo || "P");
+  for (const etapa of arbol.etapas) {
+    const exacta = (etapa.secciones || []).find((s) => s.codigo === codigo && !s.recurrente);
+    if (exacta) return { etapa, seccion: exacta };
+  }
+  let etapa = arbol.etapas.find((e) => e.codigo === codigo);
+  if (etapa) {
+    const fijas = (etapa.secciones || []).filter((s) => !s.recurrente);
+    if (fijas.length) return { etapa, seccion: fijas[fijas.length - 1] };
+  } else {
+    etapa = { id: uid(), codigo, nombre: etapaNombre || (codigo === "P" ? "Hitos propios" : codigo), secciones: [] };
+    arbol.etapas.push(etapa);
+  }
+  const seccion = { id: uid(), codigo, nombre: etapa.nombre, hitos: [] };
+  etapa.secciones = [...(etapa.secciones || []), seccion];
+  return { etapa, seccion };
+};
+
+// Hito del catálogo personalizado anterior (catalogoHitos / agregarCatalogoHito)
+// convertido a plantilla.
+export const plantillaDesdeHitoPersonal = (hito = {}) => completarPlantilla({
+  id: hito.id,
+  clave: hito.clave || `cat_${uid()}`,
+  nombre: String(hito.nombre || "").trim(),
+  docs: limpiarDocs(hito.docs),
+  cumplimiento: hito.cumplimiento || "",
+  plazoDias: Number(hito.dias ?? hito.plazoDias ?? 0),
+  plazoBase: hito.base || hito.plazoBase || "inicio",
+  plazoHabiles: (hito.habiles ?? hito.plazoHabiles) !== false,
+  norma: hito.norma || "Ley 32069 y su Reglamento",
+  nota: hito.nota || "Hito agregado al catálogo personalizado.",
+  activo: hito.activo !== false,
+});
+
+const ultimoNumero = (codigo) => Number(String(codigo || "").split(".").pop());
+
+// ¿La clave es el código propio del hito dentro de esta sección? (p. ej. "1.2.5" en "1.2")
+const esCodigoDeSeccion = (clave, seccion) => {
+  const texto = String(clave || "");
+  if (!/^\d+(\.\d+)+$/.test(texto) || !texto.startsWith(`${seccion.codigo}.`)) return false;
+  return texto.split(".").length === String(seccion.codigo).split(".").length + 1;
+};
+
+// Código de cada hito de una sección fija. Los hitos de la semilla conservan su
+// código (su clave), así un mismo código significa lo mismo en todos los
+// contratos aunque se desactive un hito. Los hitos propios (claves `cat_…`)
+// reciben el correlativo siguiente al mayor código de la sección, en orden.
+const codigosDeSeccion = (seccion) => {
+  const hitos = seccion.hitos || [];
+  const reservados = new Set();
+  for (const h of hitos) if (esCodigoDeSeccion(h.clave, seccion)) reservados.add(h.clave);
+  let siguiente = Math.max(0, ...[...reservados].map(ultimoNumero)) + 1;
+  const usados = new Set();
+  const codigos = new Map();
+  for (const h of hitos) {
+    let codigo = esCodigoDeSeccion(h.clave, seccion) && !usados.has(h.clave) ? h.clave : null;
+    if (!codigo) {
+      codigo = `${seccion.codigo}.${siguiente}`;
+      siguiente += 1;
+    }
+    usados.add(codigo);
+    codigos.set(h, codigo);
+  }
+  return codigos;
+};
+
+// Genera los hitos de un contrato nuevo desde el catálogo almacenado. Omite las
+// plantillas con `activo: false`. Los hitos ya creados en otros contratos no se tocan.
+export const crearTareas = (tramite, catalogo, feriados) => {
+  const arbol = catalogo?.[ambitoDe(tramite.tipo_objeto)] || { etapas: [] };
   const tareas = [];
-  const docsDe = (clave, originales) => plantillasDocs[clave]?.docs || originales || [];
-  for (const etapa of catalogo.etapas) {
-    for (const seccion of etapa.secciones) {
+  for (const etapa of arbol.etapas || []) {
+    for (const seccion of etapa.secciones || []) {
+      const plantilla = seccion.plantilla;
       if (seccion.recurrente === "mensual") {
+        if (!plantilla || plantilla.activo === false) continue;
         const todos = mesesDelContrato(tramite);
         const periodos = seccion.soloPrimerPeriodo ? todos.slice(0, 1) : todos;
         const dia = seccion.diaLimite || 10;
         periodos.forEach((p, i) => {
-          const plantilla = seccion.plantilla;
-          const nombre = `${plantilla.nombre} ${pad(i + 1)} — ${MESES[p.mes - 1]} ${p.anio}`;
-          const override = plantillasDocs[seccion.codigo] || {};
           tareas.push(crearTarea(tramite, etapa, seccion, {
             ...plantilla,
             codigo: `${seccion.codigo}.${i + 1}`,
-            nombre,
-            docs: docsDe(seccion.codigo, plantilla.docs),
-            cumplimiento: override.cumplimiento !== undefined ? override.cumplimiento : (plantilla.cumplimiento || ""),
-            norma: override.norma !== undefined ? override.norma : plantilla.norma,
+            nombre: `${plantilla.nombre} ${pad(i + 1)} — ${MESES[p.mes - 1]} ${p.anio}`,
           }, {
             recurrente: true,
             periodo: p.periodo,
@@ -416,6 +682,7 @@ export const crearTareas = (tramite, plantillasDocs = {}, catalogoHitos = [], fe
           }));
         });
       } else if (seccion.recurrente === "anual") {
+        if (!plantilla || plantilla.activo === false) continue;
         const inicio = parseFecha(tramite.fecha_inicio || hoy());
         const fin = parseFecha(tramite.fecha_fin || iso(addMeses(inicio, 11)));
         const totalMeses = Math.max(
@@ -424,18 +691,13 @@ export const crearTareas = (tramite, plantillasDocs = {}, catalogoHitos = [], fe
         );
         const cantidad = Math.max(1, Math.ceil(totalMeses / 12));
         for (let i = 0; i < Math.min(cantidad, 6); i += 1) {
-          const plantilla = seccion.plantilla;
           const vence = totalMeses <= 12
             ? sumarDias(iso(fin), -Number(seccion.diaLimite || 15))
             : sumarDias(iso(addMeses(inicio, (i + 1) * 12)), -Number(seccion.diaLimite || 15));
-          const override = plantillasDocs[seccion.codigo] || {};
           tareas.push(crearTarea(tramite, etapa, seccion, {
             ...plantilla,
             codigo: `${seccion.codigo}.${i + 1}`,
             nombre: `${plantilla.nombre} ${i + 1}`,
-            docs: docsDe(seccion.codigo, plantilla.docs),
-            cumplimiento: override.cumplimiento !== undefined ? override.cumplimiento : (plantilla.cumplimiento || ""),
-            norma: override.norma !== undefined ? override.norma : plantilla.norma,
           }, {
             recurrente: true,
             periodo: `Año ${i + 1}`,
@@ -447,89 +709,22 @@ export const crearTareas = (tramite, plantillasDocs = {}, catalogoHitos = [], fe
           }));
         }
       } else {
-        for (const plantilla of seccion.tareas) {
-          const override = plantillasDocs[plantilla.codigo] || {};
-          const efectiva = {
-            ...plantilla,
-            docs: docsDe(plantilla.codigo, plantilla.docs),
-            nombre: override.nombre !== undefined ? override.nombre : plantilla.nombre,
-            cumplimiento: override.cumplimiento !== undefined ? override.cumplimiento : (plantilla.cumplimiento || ""),
-            plazoDias: override.plazoDias !== undefined ? override.plazoDias : plantilla.plazoDias,
-            plazoBase: override.plazoBase !== undefined ? override.plazoBase : plantilla.plazoBase,
-            plazoHabiles: override.plazoHabiles !== undefined ? override.plazoHabiles : plantilla.plazoHabiles,
-            norma: override.norma !== undefined ? override.norma : plantilla.norma,
-            nota: override.nota !== undefined ? override.nota : plantilla.nota,
-          };
-          tareas.push(crearTarea(tramite, etapa, seccion, efectiva, {
+        const codigos = codigosDeSeccion(seccion);
+        for (const hito of seccion.hitos || []) {
+          if (hito.activo === false) continue;
+          const efectiva = { ...hito, codigo: codigos.get(hito) };
+          const extra = {
             fecha_limite: calcularVence(tramite, efectiva, feriados),
-          }));
-        }
-      }
-    }
-  }
-
-  // Hitos agregados por el usuario a su catálogo. Se generan como hitos fijos
-  // en el contrato, con código correlativo dentro de la etapa elegida.
-  for (const hito of catalogoHitos || []) {
-    if (hito.activo === false) continue;
-    if (hito.tipoObjeto && hito.tipoObjeto !== tramite.tipo_objeto) continue;
-    const etapa = { codigo: hito.etapaCodigo, nombre: hito.etapaNombre };
-    const seccion = { codigo: hito.etapaCodigo, nombre: hito.etapaNombre };
-    const numeros = tareas
-      .filter((t) => t.seccionCodigo === seccion.codigo)
-      .map((t) => Number(String(t.codigo || "").split(".").pop()))
-      .filter((n) => Number.isFinite(n));
-    const consecutivo = (numeros.length ? Math.max(...numeros) : 0) + 1;
-    const clave = hito.clave || hito.id;
-    const plantilla = {
-      codigo: `${seccion.codigo}.${consecutivo}`,
-      nombre: hito.nombre,
-      docs: docsDe(clave, hito.docs),
-      cumplimiento: plantillasDocs[clave]?.cumplimiento ?? hito.cumplimiento ?? "",
-      plazoDias: Number(hito.dias || 0),
-      plazoBase: hito.base || "inicio",
-      plazoHabiles: hito.habiles !== false,
-      norma: hito.norma || "Ley 32069 y su Reglamento",
-      nota: hito.nota || "Hito agregado al catálogo personalizado.",
-    };
-    tareas.push(crearTarea(tramite, etapa, seccion, plantilla, {
-      fecha_limite: calcularVence(tramite, plantilla, feriados),
-      plantilla: clave,
-      clavePlantilla: clave,
-      origen: "catalogo",
-    }));
-  }
-
-  return tareas;
-};
-
-// Plantillas de documentos editables por el usuario. La clave es el código
-// del hito fijo o de la sección recurrente; se guardan en localStorage y se
-// aplican a los contratos que se creen después de la edición.
-export const plantillasPorDefecto = () => {
-  const mapa = {};
-  for (const catalogo of [OBRA, CONSULTORIA]) {
-    for (const etapa of catalogo.etapas) {
-      for (const seccion of etapa.secciones) {
-        if (seccion.recurrente) {
-          mapa[seccion.codigo] = {
-            docs: [...(seccion.plantilla?.docs || [])],
-            cumplimiento: seccion.plantilla?.cumplimiento || "",
+            plantilla: hito.clave,
+            clavePlantilla: hito.clave,
           };
-        } else {
-          for (const tarea of seccion.tareas || []) {
-            mapa[tarea.codigo] = { docs: [...(tarea.docs || [])], cumplimiento: tarea.cumplimiento || "" };
-          }
+          if (String(hito.clave).startsWith("cat_")) extra.origen = "catalogo";
+          tareas.push(crearTarea(tramite, etapa, seccion, efectiva, extra));
         }
       }
     }
   }
-  for (const lista of Object.values(EVENTUALES)) {
-    for (const op of lista) {
-      mapa[`eventual:${op.clave}`] = { docs: [...(op.docs || [])], cumplimiento: "" };
-    }
-  }
-  return mapa;
+  return tareas;
 };
 
 export const TIPOS_FIANZA = [
@@ -583,14 +778,15 @@ export const HITOS_OPCIONALES = {
   ],
 };
 
-export const listarHitosOpcionales = (tipo) =>
-  esConsultoria(tipo) ? HITOS_OPCIONALES["Consultoría de obra"] : HITOS_OPCIONALES.Obra;
+// Eventuales y opcionales activos del catálogo para un tipo de contrato.
+export const listarEventuales = (tipo, catalogo) =>
+  (catalogo?.eventuales?.[ambitoDe(tipo)] || []).filter((e) => e.activo !== false);
 
-export const crearTareaEventual = (tramite, clave, existentes = [], feriados) => {
-  const lista = esConsultoria(tramite.tipo_objeto)
-    ? EVENTUALES["Consultoría de obra"]
-    : EVENTUALES.Obra;
-  const modelo = lista.find((x) => x.clave === clave);
+export const listarHitosOpcionales = (tipo, catalogo) =>
+  (catalogo?.opcionales?.[ambitoDe(tipo)] || []).filter((e) => e.activo !== false);
+
+export const crearTareaEventual = (tramite, clave, existentes = [], catalogo, feriados) => {
+  const modelo = listarEventuales(tramite.tipo_objeto, catalogo).find((x) => x.clave === clave);
   if (!modelo) return null;
   const prefijo = esConsultoria(tramite.tipo_objeto) ? "2.5" : "1.4";
   const etapa = { codigo: prefijo, nombre: "Modificaciones y ampliaciones" };
@@ -600,23 +796,23 @@ export const crearTareaEventual = (tramite, clave, existentes = [], feriados) =>
     .map((t) => Number(String(t.codigo || "").split(".").pop()))
     .filter((n) => Number.isFinite(n));
   const count = (numeros.length ? Math.max(...numeros) : 0) + 1;
+  const dias = Number(modelo.plazoDias || 0);
+  const habiles = modelo.plazoHabiles !== false;
   return crearTarea(tramite, etapa, seccion, {
     codigo: `${prefijo}.${count}`,
     nombre: modelo.nombre,
-    docs: modelo.docs,
-    plazoDias: modelo.dias || 0,
+    docs: [...(modelo.docs || [])],
+    cumplimiento: modelo.cumplimiento || "",
+    plazoDias: dias,
     plazoBase: "manual",
-    plazoHabiles: modelo.habiles !== false,
+    plazoHabiles: habiles,
     norma: modelo.norma || "",
-    nota: "Trámite eventual agregado al expediente. No se crea automáticamente.",
+    nota: modelo.nota || "Trámite eventual agregado al expediente. No se crea automáticamente.",
   }, {
     tipo: "eventual",
     clave: modelo.clave,
     silencioPositivo: Boolean(modelo.silencioPositivo),
-    diasSilencio: modelo.dias || 0,
-    fecha_limite: modelo.dias ? (modelo.habiles ? sumarHabiles(hoy(), modelo.dias, feriados) : sumarDias(hoy(), modelo.dias)) : "",
+    diasSilencio: Number(modelo.diasSilencio ?? dias) || 0,
+    fecha_limite: dias ? (habiles ? sumarHabiles(hoy(), dias, feriados) : sumarDias(hoy(), dias)) : "",
   });
 };
-
-export const listarEventuales = (tipo) =>
-  esConsultoria(tipo) ? EVENTUALES["Consultoría de obra"] : EVENTUALES.Obra;

@@ -1282,3 +1282,306 @@ describe("ejecutor: empresa o consorcio", () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------
+// Regresión del catálogo almacenado (tarea 6). La referencia se capturó con el
+// código ANTERIOR al catálogo almacenado (catálogo fijo + plantillasDocs +
+// catalogoHitos). Para regenerarla: GOLDEN_WRITE=1 npx vitest run src/lib/store.test.js
+// Solo debe regenerarse si un cambio de generación es intencional.
+describe("regresión: generación de hitos igual que antes del catálogo almacenado", () => {
+  const DIR = `${process.cwd()}/src/lib/__fixtures__`;
+  const RUTA = `${DIR}/tareas-golden.json`;
+
+  const proyectar = (t) => ({
+    codigo: t.codigo,
+    nombre: t.nombre,
+    fecha_limite: t.fecha_limite,
+    tipo: t.tipo,
+    clavePlantilla: String(t.clavePlantilla || "").startsWith("cat_") ? "cat_*" : t.clavePlantilla,
+    etapaCodigo: t.etapaCodigo,
+    etapaNombre: t.etapaNombre,
+    seccionCodigo: t.seccionCodigo,
+    seccionNombre: t.seccionNombre,
+    docsRequeridos: t.docsRequeridos,
+    docCumplimiento: t.docCumplimiento,
+    plazoDias: t.plazoDias,
+    plazoBase: t.plazoBase,
+    plazoHabiles: t.plazoHabiles,
+    norma: t.norma,
+    nota: t.nota,
+    periodo: t.periodo,
+    estado: t.estado,
+  });
+
+  const escenarios = () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date("2026-11-17T15:00:00Z"));
+    try {
+      const salida = {};
+      salida.seed_t001 = store.listItems("t-001").map(proyectar);
+      salida.seed_t002 = store.listItems("t-002").map(proyectar);
+      entrar("gerente");
+      const obra = store.createTramite({
+        codigo: "G-OBRA", denominacion: "Obra golden", tipo_objeto: "Obra",
+        fecha_inicio: "2026-03-02", fecha_fin: "2027-04-30", fecha_suscripcion: "2026-02-20",
+      });
+      const consul = store.createTramite({
+        codigo: "G-CONS", denominacion: "Consultoría golden", tipo_objeto: "Consultoría de obra",
+        fecha_inicio: "2026-09-14", fecha_fin: "2027-01-29", fecha_suscripcion: "2026-09-07",
+      });
+      salida.nueva_obra = store.listItems(obra.id).map(proyectar);
+      salida.nueva_consultoria = store.listItems(consul.id).map(proyectar);
+
+      store.addTareaEventual(obra.id, "ampliacion");
+      store.addTareaEventual(consul.id, "adicional");
+      store.addHitoOpcional(obra.id, "residente_obra");
+      store.addHitoOpcional(consul.id, "seace_consultoria");
+      store.agregarMesSCTR(obra.id);
+      store.guardarConfigFianzas(obra.id, { periodo: "semestral", tipos: ["fiel_cumplimiento", "adelanto_directo"] });
+      salida.obra_con_agregados = store.listItems(obra.id).map(proyectar);
+      salida.consultoria_con_agregados = store.listItems(consul.id).map(proyectar);
+
+      // Catálogo personalizado: plantilla editada + hito propio en la sección 1.2.
+      store.guardarPlantilla("1.1.2", { docs: ["Carta fianza", "Otro documento"], cumplimiento: "Carta fianza", plazoDias: 7, nota: "Nota editada" });
+      store.guardarPlantilla("1.3.2", { docs: ["Valorización firmada", "Anexo nuevo"], cumplimiento: "Valorización firmada" });
+      store.guardarPlantilla("2.1.1", { docs: ["Contrato suscrito"], cumplimiento: "Contrato suscrito", nombre: "Perfeccionamiento editado" });
+      store.agregarCatalogoHito({
+        nombre: "Hito propio golden", tipoObjeto: "Obra", etapaCodigo: "1.2", etapaNombre: "Inicio y aseguramiento",
+        docs: ["Doc A", "Doc B"], cumplimiento: "Doc A", dias: 3, base: "suscripcion", habiles: false,
+      });
+      store.agregarCatalogoHito({
+        nombre: "Hito propio consultoría", tipoObjeto: "Consultoría de obra", etapaCodigo: "2.1", etapaNombre: "Contrato y expediente",
+        docs: ["Doc C"], dias: 4,
+      });
+      const obra2 = store.createTramite({
+        codigo: "G-OBRA2", denominacion: "Obra golden 2", tipo_objeto: "Obra",
+        fecha_inicio: "2026-03-02", fecha_fin: "2026-08-31", fecha_suscripcion: "2026-02-20",
+      });
+      const consul2 = store.createTramite({
+        codigo: "G-CONS2", denominacion: "Consultoría golden 2", tipo_objeto: "Consultoría de obra",
+        fecha_inicio: "2026-09-14", fecha_fin: "2027-01-29", fecha_suscripcion: "2026-09-07",
+      });
+      salida.obra_catalogo_editado = store.listItems(obra2.id).map(proyectar);
+      salida.consultoria_catalogo_editado = store.listItems(consul2.id).map(proyectar);
+      return salida;
+    } finally {
+      vi.useRealTimers();
+    }
+  };
+
+  it("los contratos demo, los nuevos y los agregados producen los mismos códigos, fechas y documentos", async () => {
+    const fs = await import("node:fs");
+    const actual = escenarios();
+    if (process.env.GOLDEN_WRITE) {
+      fs.mkdirSync(DIR, { recursive: true });
+      fs.writeFileSync(RUTA, `${JSON.stringify(actual, null, 2)}\n`);
+    }
+    const esperado = JSON.parse(fs.readFileSync(RUTA, "utf8"));
+    expect(Object.keys(actual)).toEqual(Object.keys(esperado));
+    for (const clave of Object.keys(esperado)) {
+      expect(actual[clave], clave).toEqual(esperado[clave]);
+    }
+  });
+});
+
+describe("catálogo almacenado", () => {
+  const hitoEn = (catalogo, clave) => {
+    for (const ambito of ["obra", "consultoria"]) {
+      for (const etapa of catalogo[ambito].etapas) {
+        for (const seccion of etapa.secciones) {
+          const h = (seccion.hitos || []).find((x) => x.clave === clave);
+          if (h) return h;
+        }
+      }
+    }
+    return null;
+  };
+  const historialCatalogo = () => store.listarHistorial({ objeto: "catalogo" });
+  const nuevaObra = () => store.createTramite({
+    codigo: "OC-CAT", denominacion: "Obra", tipo_objeto: "Obra",
+    fecha_inicio: "2026-03-02", fecha_fin: "2026-08-31", fecha_suscripcion: "2026-02-20",
+  });
+
+  it("la instalación nueva guarda el catálogo y ya no tiene plantillasDocs ni catalogoHitos", () => {
+    store.listTramites();
+    const data = leerV7();
+    expect(data.catalogo.obra.etapas.length).toBeGreaterThan(0);
+    expect(data.plantillasDocs).toBeUndefined();
+    expect(data.catalogoHitos).toBeUndefined();
+  });
+
+  it("getCatalogo exige sesión y devuelve una copia con ids estables entre lecturas", () => {
+    expect(() => store.getCatalogo()).toThrow();
+    entrar("consulta");
+    const a = store.getCatalogo();
+    const b = store.getCatalogo();
+    expect(hitoEn(a, "1.1.1").id).toBe(hitoEn(b, "1.1.1").id);
+    hitoEn(a, "1.1.1").docs.push("mutado");
+    expect(hitoEn(store.getCatalogo(), "1.1.1").docs).not.toContain("mutado");
+  });
+
+  it("asis_adm no puede guardarCatalogo", () => {
+    entrar("asis_adm");
+    const cat = store.getCatalogo();
+    expect(() => store.guardarCatalogo(cat, "x")).toThrow("No tienes permiso para esta acción.");
+    expect(() => store.guardarPlantilla("1.1.1", { docs: ["X"] })).toThrow("No tienes permiso");
+    expect(() => store.agregarCatalogoHito({ nombre: "X" })).toThrow("No tienes permiso");
+    expect(() => store.restaurarCatalogo()).toThrow("No tienes permiso");
+  });
+
+  it("jefe sí puede guardarCatalogo y queda en el historial", () => {
+    entrar("jefe");
+    const cat = store.getCatalogo();
+    hitoEn(cat, "1.1.1").docs = ["Contrato suscrito", "Nuevo requisito"];
+    store.guardarCatalogo(cat, "Se agregó un requisito al perfeccionamiento");
+    expect(hitoEn(store.getCatalogo(), "1.1.1").docs).toEqual(["Contrato suscrito", "Nuevo requisito"]);
+    const [h] = historialCatalogo();
+    expect(h).toMatchObject({ accion: "editar", objeto: "catalogo", detalle: "Se agregó un requisito al perfeccionamiento" });
+  });
+
+  it("guardarCatalogo completa los campos por defecto de las plantillas nuevas", () => {
+    entrar("gerente");
+    const cat = store.getCatalogo();
+    cat.obra.etapas[0].secciones[0].hitos.push({ clave: "cat_nuevo", nombre: "Nuevo", docs: [] });
+    store.guardarCatalogo(cat, "Hito nuevo");
+    const nuevo = hitoEn(store.getCatalogo(), "cat_nuevo");
+    expect(nuevo).toMatchObject({ activo: true, verificado: false, pasos: [], plazoLevantamiento: null });
+    expect(typeof nuevo.id).toBe("string");
+  });
+
+  it("guardarPlantilla cambia los contratos nuevos y no los existentes", () => {
+    entrar("gerente");
+    const antes = nuevaObra();
+    const docsAntes = store.listItems(antes.id).find((i) => i.codigo === "1.1.2").docsRequeridos;
+    store.guardarPlantilla("1.1.2", { docs: ["Carta fianza", " Carta fianza ", "Anexo"], cumplimiento: "Carta fianza" });
+    expect(store.getPlantilla("1.1.2")).toMatchObject({ docs: ["Carta fianza", "Anexo"], cumplimiento: "Carta fianza" });
+    const despues = nuevaObra();
+    expect(store.listItems(despues.id).find((i) => i.codigo === "1.1.2").docsRequeridos).toEqual(["Carta fianza", "Anexo"]);
+    expect(store.listItems(antes.id).find((i) => i.codigo === "1.1.2").docsRequeridos).toEqual(docsAntes);
+    const [h] = historialCatalogo();
+    expect(h).toMatchObject({ accion: "editar", objeto: "catalogo" });
+    expect(h.detalle).toContain("Garantía de fiel cumplimiento");
+  });
+
+  it("guardarPlantilla de una sección recurrente cambia sus periodos y no su nombre", () => {
+    entrar("gerente");
+    store.guardarPlantilla("1.3.2", { docs: ["Valorización firmada"], cumplimiento: "Valorización firmada", nombre: "Valorización 01 — marzo 2026" });
+    const t = nuevaObra();
+    const v = store.listItems(t.id).find((i) => i.codigo === "1.3.2.1");
+    expect(v).toMatchObject({ nombre: "Valorización 01 — marzo 2026", docsRequeridos: ["Valorización firmada"] });
+    const v2 = store.listItems(t.id).find((i) => i.codigo === "1.3.2.2");
+    expect(v2.nombre).toBe("Valorización 02 — abril 2026");
+  });
+
+  it("guardarPlantilla con una clave que no está en el catálogo no escribe nada", () => {
+    entrar("gerente");
+    expect(store.guardarPlantilla("1.4.1", { docs: ["X"] })).toBeNull();
+    expect(historialCatalogo()).toEqual([]);
+  });
+
+  it("agregar, actualizar y eliminar un hito personalizado quedan en el catálogo y en el historial", () => {
+    entrar("jefe");
+    const creado = store.agregarCatalogoHito({
+      nombre: "Hito propio", tipoObjeto: "Obra", etapaCodigo: "1.2", etapaNombre: "Inicio y aseguramiento",
+      docs: ["A", "A", " B "], dias: 3, base: "suscripcion", habiles: false,
+    });
+    expect(creado).toMatchObject({ nombre: "Hito propio", tipoObjeto: "Obra", etapaCodigo: "1.2", docs: ["A", "B"], dias: 3, habiles: false });
+    expect(creado.clave.startsWith("cat_")).toBe(true);
+    expect(store.listarCatalogoHitos().map((h) => h.clave)).toEqual([creado.clave]);
+    let t = nuevaObra();
+    expect(store.listItems(t.id).find((i) => i.clavePlantilla === creado.clave)).toMatchObject({ codigo: "1.2.10", fecha_limite: "2026-02-23" });
+
+    store.actualizarCatalogoPorClave(creado.clave, { nombre: "Hito renombrado", dias: 0 });
+    expect(store.listarCatalogoHitos()[0]).toMatchObject({ id: creado.id, nombre: "Hito renombrado", dias: 0 });
+    store.actualizarCatalogoHito(creado.id, { activo: false });
+    t = nuevaObra();
+    expect(store.listItems(t.id).some((i) => i.clavePlantilla === creado.clave)).toBe(false);
+
+    store.eliminarCatalogoHito(creado.id);
+    expect(store.listarCatalogoHitos()).toEqual([]);
+    expect(historialCatalogo().map((h) => h.accion)).toEqual(["eliminar", "editar", "editar", "agregar"]);
+  });
+
+  it("actualizarCatalogoHito puede mover el hito a otra etapa", () => {
+    entrar("gerente");
+    const creado = store.agregarCatalogoHito({ nombre: "Móvil", tipoObjeto: "Obra", etapaCodigo: "1.1", etapaNombre: "Contrato y expediente" });
+    store.actualizarCatalogoHito(creado.id, { etapaCodigo: "1.5", etapaNombre: "Recepción y liquidación" });
+    expect(store.listarCatalogoHitos()[0]).toMatchObject({ etapaCodigo: "1.5", etapaNombre: "Recepción y liquidación" });
+    const t = nuevaObra();
+    expect(store.listItems(t.id).find((i) => i.clavePlantilla === creado.clave).codigo).toBe("1.5.9");
+  });
+
+  it("restaurarCatalogo sin ruta vuelve a la semilla completa", () => {
+    entrar("gerente");
+    store.guardarPlantilla("1.1.1", { docs: ["Solo uno"] });
+    store.agregarCatalogoHito({ nombre: "Propio", tipoObjeto: "Obra", etapaCodigo: "1.1" });
+    store.restaurarCatalogo();
+    const cat = store.getCatalogo();
+    expect(hitoEn(cat, "1.1.1").docs).toContain("Vigencia de poder del representante legal");
+    expect(store.listarCatalogoHitos()).toEqual([]);
+    expect(historialCatalogo()[0]).toMatchObject({ accion: "restaurar", objeto: "catalogo" });
+  });
+
+  it("restaurarCatalogo con una clave restaura solo esa plantilla y conserva su id", () => {
+    entrar("gerente");
+    const id = hitoEn(store.getCatalogo(), "1.1.1").id;
+    store.guardarPlantilla("1.1.1", { docs: ["Solo uno"] });
+    store.guardarPlantilla("1.1.2", { docs: ["Otro"] });
+    store.restaurarCatalogo("1.1.1");
+    const cat = store.getCatalogo();
+    expect(hitoEn(cat, "1.1.1")).toMatchObject({ id, nombre: "Perfeccionamiento de contrato" });
+    expect(hitoEn(cat, "1.1.1").docs).toContain("Contrato suscrito");
+    expect(hitoEn(cat, "1.1.2").docs).toEqual(["Otro"]);
+    expect(historialCatalogo()[0]).toMatchObject({ accion: "restaurar", objeto: "catalogo" });
+    expect(historialCatalogo()[0].detalle).toContain("Perfeccionamiento de contrato");
+  });
+
+  it("restaurarCatalogo de un hito que no está en la semilla avisa", () => {
+    entrar("gerente");
+    const creado = store.agregarCatalogoHito({ nombre: "Propio", tipoObjeto: "Obra", etapaCodigo: "1.1" });
+    expect(() => store.restaurarCatalogo(creado.clave)).toThrow("Este hito no existe en el catálogo original.");
+  });
+
+  it("restaurarCatalogo devuelve un hito quitado a su sección", () => {
+    entrar("gerente");
+    const cat = store.getCatalogo();
+    const seccion = cat.obra.etapas[0].secciones[0];
+    seccion.hitos = seccion.hitos.filter((h) => h.clave !== "1.1.3");
+    store.guardarCatalogo(cat, "Se quitó 1.1.3");
+    expect(hitoEn(store.getCatalogo(), "1.1.3")).toBeNull();
+    store.restaurarCatalogo("1.1.3");
+    expect(hitoEn(store.getCatalogo(), "1.1.3")).toMatchObject({ nombre: "Garantía por adelanto directo" });
+  });
+
+  it("listarEventuales y listarHitosOpcionales leen del catálogo con los alias de siempre", () => {
+    entrar("gerente");
+    const ampliacion = store.listarEventuales("Obra").find((e) => e.clave === "ampliacion");
+    expect(ampliacion).toMatchObject({ dias: 10, habiles: true, plazoDias: 10 });
+    const cat = store.getCatalogo();
+    cat.eventuales.obra.find((e) => e.clave === "ampliacion").activo = false;
+    cat.opcionales.obra.find((e) => e.clave === "residente_obra").docs = ["Carta"];
+    store.guardarCatalogo(cat, "x");
+    expect(store.listarEventuales("Obra").map((e) => e.clave)).not.toContain("ampliacion");
+    const t = nuevaObra();
+    expect(store.addTareaEventual(t.id, "ampliacion")).toBeNull();
+    expect(store.addHitoOpcional(t.id, "residente_obra").docsRequeridos).toEqual(["Carta"]);
+  });
+
+  it("un v7 guardado antes del catálogo almacenado se funde al leer y guarda ids estables", async () => {
+    store.listTramites();
+    const viejo = leerV7();
+    delete viejo.catalogo;
+    viejo.plantillasDocs = { "1.1.1": { docs: ["Editado"], cumplimiento: "Editado" } };
+    viejo.catalogoHitos = [{ id: "h", clave: "cat_v", nombre: "Viejo", tipoObjeto: "Obra", etapaCodigo: "1.1", etapaNombre: "Contrato y expediente", docs: [] }];
+    escribirV7(viejo);
+    vi.resetModules();
+    store = await import("./store.js");
+    entrar("gerente");
+    const guardado = leerV7();
+    expect(guardado.plantillasDocs).toBeUndefined();
+    expect(guardado.catalogoHitos).toBeUndefined();
+    expect(hitoEn(guardado.catalogo, "1.1.1").docs).toEqual(["Editado"]);
+    expect(hitoEn(guardado.catalogo, "cat_v")).toBeTruthy();
+    expect(hitoEn(store.getCatalogo(), "1.1.1").id).toBe(hitoEn(guardado.catalogo, "1.1.1").id);
+  });
+});

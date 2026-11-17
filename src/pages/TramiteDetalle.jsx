@@ -525,7 +525,19 @@ export default function TramiteDetalle() {
       setNotaCatalogo(`“${nombre}” se convirtió en hito de catálogo en ${etapaCodigo} ${etapaNombre} y se generará en los contratos nuevos de ${tramite.tipo_objeto}.`);
     } else {
       updateItem(tarea.id, cambios);
-      if (tarea.clavePlantilla) {
+      // Ambas funciones escriben en el catálogo almacenado; un hito propio
+      // (`cat_…`) se edita por su clave, el resto por la plantilla de su código.
+      if (String(tarea.clavePlantilla || "").startsWith("cat_")) {
+        actualizarCatalogoPorClave(tarea.clavePlantilla, {
+          nombre,
+          docs,
+          cumplimiento,
+          dias: cambios.plazoDias,
+          base: cambios.plazoBase,
+          habiles: cambios.plazoHabiles,
+          norma: cambios.norma,
+        });
+      } else if (tarea.clavePlantilla) {
         guardarPlantilla(tarea.clavePlantilla, {
           docs,
           cumplimiento,
@@ -535,17 +547,6 @@ export default function TramiteDetalle() {
           plazoHabiles: cambios.plazoHabiles,
           norma: cambios.norma,
         });
-        if (String(tarea.clavePlantilla).startsWith("cat_")) {
-          actualizarCatalogoPorClave(tarea.clavePlantilla, {
-            nombre,
-            docs,
-            cumplimiento,
-            dias: cambios.plazoDias,
-            base: cambios.plazoBase,
-            habiles: cambios.plazoHabiles,
-            norma: cambios.norma,
-          });
-        }
       }
       setNotaCatalogo(`Catálogo de “${nombre}” actualizado. Los cambios se aplicarán a contratos nuevos.`);
     }

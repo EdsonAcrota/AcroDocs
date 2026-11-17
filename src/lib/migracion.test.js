@@ -33,7 +33,6 @@ describe("migrarV6aV7", () => {
     // los datos de configuración también se conservan
     expect(v7.feriados).toEqual(["2026-12-25"]);
     expect(v7.configFianzas["t-001"].periodo).toBe("anual");
-    expect(v7.plantillasDocs["1.1.1"].docs).toEqual(["Contrato firmado"]);
   });
 
   it("agrega pasos vacíos a cada hito sin tocar los que ya los tengan", () => {
@@ -118,5 +117,89 @@ describe("migrarV6aV7", () => {
     expect(v7.items).toEqual([]);
     expect(Array.isArray(v7.feriados)).toBe(true);
     expect(v7.usuarios).toHaveLength(9);
+  });
+});
+
+const hitoPorClave = (arbol, clave) => {
+  for (const etapa of arbol.etapas) {
+    for (const seccion of etapa.secciones) {
+      const h = (seccion.hitos || []).find((x) => x.clave === clave);
+      if (h) return { etapa, seccion, hito: h };
+    }
+  }
+  return null;
+};
+const seccionPorCodigo = (arbol, codigo) => arbol.etapas.flatMap((e) => e.secciones).find((s) => s.codigo === codigo);
+
+describe("migrarV6aV7: catálogo almacenado", () => {
+  it("migración funde plantillasDocs (docs editados) en el catálogo", () => {
+    const v6 = v6Base();
+    v6.plantillasDocs = {
+      "1.1.1": { docs: ["Contrato firmado"], cumplimiento: "Contrato firmado" },
+      "1.1.2": { docs: ["Carta"], cumplimiento: "Carta", nombre: "Garantía editada", plazoDias: 7, plazoHabiles: true, nota: "N" },
+      "1.3.2": { docs: ["Valorización", "Anexo"], cumplimiento: "Anexo", nombre: "Valorización 03 — x", plazoDias: 99 },
+      "eventual:ampliacion": { docs: ["Solicitud"], cumplimiento: "" },
+      "opcional:seace_obra": { docs: ["Ficha"], cumplimiento: "Ficha" },
+      "1.4.1": { docs: ["huérfana"] },
+    };
+    const v7 = migrarV6aV7(v6);
+    expect(v7.plantillasDocs).toBeUndefined();
+    expect(v7.catalogoHitos).toBeUndefined();
+    const { hito } = hitoPorClave(v7.catalogo.obra, "1.1.1");
+    expect(hito).toMatchObject({ docs: ["Contrato firmado"], cumplimiento: "Contrato firmado", verificado: false, pasos: [] });
+    expect(hitoPorClave(v7.catalogo.obra, "1.1.2").hito).toMatchObject({
+      nombre: "Garantía editada", plazoDias: 7, plazoHabiles: true, nota: "N", docs: ["Carta"],
+    });
+    // En una sección recurrente solo cuentan documentos, cumplimiento y norma.
+    expect(seccionPorCodigo(v7.catalogo.obra, "1.3.2").plantilla).toMatchObject({
+      nombre: "Valorización", plazoDias: 0, docs: ["Valorización", "Anexo"], cumplimiento: "Anexo",
+    });
+    expect(v7.catalogo.eventuales.obra.find((e) => e.clave === "ampliacion").docs).toEqual(["Solicitud"]);
+    expect(v7.catalogo.eventuales.consultoria.find((e) => e.clave === "ampliacion").docs).toEqual(["Solicitud"]);
+    expect(v7.catalogo.opcionales.obra.find((e) => e.clave === "seace_obra")).toMatchObject({ docs: ["Ficha"], cumplimiento: "Ficha" });
+    // las demás plantillas quedan como en la semilla
+    expect(hitoPorClave(v7.catalogo.consultoria, "2.1.1").hito.docs).toContain("Contrato suscrito");
+  });
+
+  it("migración inserta catalogoHitos en su etapa", () => {
+    const v6 = v6Base();
+    v6.catalogoHitos = [
+      {
+        id: "h1", clave: "cat_1", nombre: "Hito obra", tipoObjeto: "Obra", etapaCodigo: "1.2", etapaNombre: "Inicio y aseguramiento",
+        docs: ["A"], cumplimiento: "A", dias: 3, base: "suscripcion", habiles: false, norma: "Norma X", nota: "Nota", activo: true,
+      },
+      { id: "h2", clave: "cat_2", nombre: "Hito consultoría", tipoObjeto: "Consultoría de obra", etapaCodigo: "2.1", etapaNombre: "Contrato y expediente", docs: [], dias: 0, activo: false },
+      { id: "h3", clave: "cat_3", nombre: "Hito ejecución", tipoObjeto: "Obra", etapaCodigo: "1.3", etapaNombre: "Ejecución de obra", docs: [] },
+      { id: "h4", clave: "cat_4", nombre: "Hito propio", tipoObjeto: "Obra", etapaCodigo: "P", etapaNombre: "Hitos propios", docs: [] },
+    ];
+    v6.plantillasDocs = { cat_1: { docs: ["A", "B"], cumplimiento: "B" } };
+    const v7 = migrarV6aV7(v6);
+
+    const uno = hitoPorClave(v7.catalogo.obra, "cat_1");
+    expect(uno.seccion.codigo).toBe("1.2");
+    expect(uno.seccion.hitos[uno.seccion.hitos.length - 1].clave).toBe("cat_1");
+    expect(uno.hito).toMatchObject({
+      nombre: "Hito obra", docs: ["A", "B"], cumplimiento: "B", plazoDias: 3, plazoBase: "suscripcion", plazoHabiles: false,
+      norma: "Norma X", nota: "Nota", activo: true, verificado: false, pasos: [], plazoLevantamiento: null,
+    });
+    expect(typeof uno.hito.id).toBe("string");
+
+    const dos = hitoPorClave(v7.catalogo.consultoria, "cat_2");
+    expect(dos.seccion.codigo).toBe("2.1");
+    expect(dos.hito.activo).toBe(false);
+    expect(hitoPorClave(v7.catalogo.obra, "cat_2")).toBeNull();
+
+    // La etapa 1.3 no tiene una sección 1.3: va a la última sección no recurrente de la etapa.
+    expect(hitoPorClave(v7.catalogo.obra, "cat_3").seccion.codigo).toBe("1.3.1");
+    // "P" (hitos propios) no existe en la semilla: se crea al final.
+    const cuatro = hitoPorClave(v7.catalogo.obra, "cat_4");
+    expect(cuatro.etapa).toMatchObject({ codigo: "P", nombre: "Hitos propios" });
+    expect(cuatro.seccion.codigo).toBe("P");
+  });
+
+  it("conserva un catálogo que ya venga en los datos", () => {
+    const v6 = v6Base();
+    v6.catalogo = { obra: { etapas: [] }, consultoria: { etapas: [] }, eventuales: { obra: [], consultoria: [] }, opcionales: { obra: [], consultoria: [] } };
+    expect(migrarV6aV7(v6).catalogo).toEqual(v6.catalogo);
   });
 });
