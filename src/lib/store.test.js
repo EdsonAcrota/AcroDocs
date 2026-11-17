@@ -1584,4 +1584,25 @@ describe("catálogo almacenado", () => {
     expect(hitoEn(guardado.catalogo, "cat_v")).toBeTruthy();
     expect(hitoEn(store.getCatalogo(), "1.1.1").id).toBe(hitoEn(guardado.catalogo, "1.1.1").id);
   });
+  it("reordenar los hitos de una sección renumera por posición y el contrato nuevo los trae en ese orden", async () => {
+    entrar("gerente");
+    const { renumerarHitos } = await import("./catalogo.js");
+    const cat = store.getCatalogo();
+    const seccion = cat.obra.etapas[0].secciones.find((s) => (s.hitos || []).length > 1);
+    const [primero, segundo] = seccion.hitos;
+    [seccion.hitos[0], seccion.hitos[1]] = [segundo, primero];
+    renumerarHitos(seccion);
+    store.guardarCatalogo(cat, "reorden");
+    const items = store.listItems(nuevaObra().id);
+    expect(items.find((i) => i.nombre === segundo.nombre).codigo).toBe(`${seccion.codigo}.1`);
+    expect(items.find((i) => i.nombre === primero.nombre).codigo).toBe(`${seccion.codigo}.2`);
+  });
+
+  it("guardarCatalogo rechaza hitos con la misma clave", () => {
+    entrar("gerente");
+    const cat = store.getCatalogo();
+    const seccion = cat.obra.etapas[0].secciones.find((s) => (s.hitos || []).length > 1);
+    seccion.hitos[1].clave = seccion.hitos[0].clave;
+    expect(() => store.guardarCatalogo(cat, "x")).toThrow("El catálogo tiene hitos duplicados.");
+  });
 });

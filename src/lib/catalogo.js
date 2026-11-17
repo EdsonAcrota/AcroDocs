@@ -396,8 +396,10 @@ const crearTarea = (tramite, etapa, seccion, plantilla, extra = {}) => ({
 //               opcionales: { obra: Plantilla[], consultoria: Plantilla[] } }
 // Arbol     = { codigo, nombre, etapas: [{ id, codigo, nombre, secciones: [{ id, codigo, nombre,
 //               recurrente?, diaLimite?, soloPrimerPeriodo?, plantilla?: Plantilla, hitos?: Plantilla[] }] }] }
-// Plantilla = { id, clave, nombre, docs, cumplimiento, plazoDias, plazoBase, plazoHabiles, norma,
+// Plantilla = { id, clave, codigo?, nombre, docs, cumplimiento, plazoDias, plazoBase, plazoHabiles, norma,
 //               nota, activo, verificado, pasos, plazoLevantamiento, silencioPositivo?, diasSilencio? }
+// `codigo` solo existe en los hitos de secciones fijas: es el número con el que el hito
+// se crea en los contratos nuevos. La `clave` es su identidad y no cambia nunca.
 // Los opcionales llevan además `etapaCodigo` y `etapaNombre` (dónde se agregan).
 
 export const AMBITOS = ["obra", "consultoria"];
@@ -436,6 +438,11 @@ const desdeT = (clave, t) => completarPlantilla({
   nota: t.nota,
 });
 
+// Los hitos fijos llevan además su `codigo` explícito (el número con el que se
+// crean en los contratos). La clave los identifica; el código puede cambiar al
+// reordenar el árbol.
+const hitoSemilla = (t) => ({ ...desdeT(t.codigo, t), codigo: t.codigo });
+
 const arbolSemilla = (fuente) => ({
   codigo: fuente.codigo,
   nombre: fuente.nombre,
@@ -453,7 +460,7 @@ const arbolSemilla = (fuente) => ({
         soloPrimerPeriodo: Boolean(s.soloPrimerPeriodo),
         plantilla: desdeT(s.codigo, s.plantilla),
       }
-      : { id: uid(), codigo: s.codigo, nombre: s.nombre, hitos: s.tareas.map((t) => desdeT(t.codigo, t)) })),
+      : { id: uid(), codigo: s.codigo, nombre: s.nombre, hitos: s.tareas.map(hitoSemilla) })),
   })),
 });
 
@@ -630,20 +637,27 @@ const esCodigoDeSeccion = (clave, seccion) => {
   return texto.split(".").length === String(seccion.codigo).split(".").length + 1;
 };
 
-// Código de cada hito de una sección fija. Los hitos de la semilla conservan su
-// código (su clave), así un mismo código significa lo mismo en todos los
-// contratos aunque se desactive un hito. Los hitos propios (claves `cat_…`)
-// reciben el correlativo siguiente al mayor código de la sección, en orden.
+// Código de cada hito de una sección fija. Un hito con `codigo` explícito lo
+// conserva. Los que no lo tienen (catálogos guardados antes de que existiera el
+// campo, o hitos recién agregados) lo reciben así: los de la semilla toman su
+// clave, que ya es un código de la sección, y los propios (claves `cat_…`) el
+// correlativo siguiente al mayor código de la sección, en orden. Todo código de la
+// sección, activo o no, queda reservado, así que no hay duplicados.
 const codigosDeSeccion = (seccion) => {
   const hitos = seccion.hitos || [];
+  const propio = (h) => h.codigo || (esCodigoDeSeccion(h.clave, seccion) ? h.clave : null);
   const reservados = new Set();
-  for (const h of hitos) if (esCodigoDeSeccion(h.clave, seccion)) reservados.add(h.clave);
-  let siguiente = Math.max(0, ...[...reservados].map(ultimoNumero)) + 1;
+  for (const h of hitos) {
+    const codigo = propio(h);
+    if (codigo) reservados.add(codigo);
+  }
+  const numeros = [...reservados].map(ultimoNumero).filter(Number.isFinite);
+  let siguiente = Math.max(0, ...numeros) + 1;
   const usados = new Set();
   const codigos = new Map();
   for (const h of hitos) {
-    let codigo = esCodigoDeSeccion(h.clave, seccion) && !usados.has(h.clave) ? h.clave : null;
-    if (!codigo) {
+    let codigo = propio(h);
+    if (!codigo || usados.has(codigo)) {
       codigo = `${seccion.codigo}.${siguiente}`;
       siguiente += 1;
     }
@@ -651,6 +665,136 @@ const codigosDeSeccion = (seccion) => {
     codigos.set(h, codigo);
   }
   return codigos;
+};
+
+// Completa el `codigo` de los hitos que no lo tienen (ver `codigosDeSeccion`).
+// Devuelve true si cambió algo. Muta el catálogo.
+export const asignarCodigos = (catalogo) => {
+  let cambio = false;
+  for (const ambito of AMBITOS) {
+    for (const etapa of catalogo?.[ambito]?.etapas || []) {
+      for (const seccion of etapa.secciones || []) {
+        if (seccion.recurrente || !(seccion.hitos || []).some((h) => !h.codigo)) continue;
+        const codigos = codigosDeSeccion(seccion);
+        for (const h of seccion.hitos) {
+          if (!h.codigo) { h.codigo = codigos.get(h); cambio = true; }
+        }
+      }
+    }
+  }
+  return cambio;
+};
+
+// Recalcula por posición el código de todos los hitos de una sección, activos e
+// inactivos: `<código de la sección>.<posición>`. Lo usa el editor al reordenar,
+// agregar o quitar un hito. Las claves no cambian. Muta la sección.
+export const renumerarHitos = (seccion) => {
+  (seccion.hitos || []).forEach((h, i) => { h.codigo = `${seccion.codigo}.${i + 1}`; });
+  return seccion;
+};
+
+// Etapa donde se numeran los trámites eventuales de cada tipo de contrato
+// (`crearTareaEventual`). El editor no la entrega a una etapa nueva.
+export const PREFIJO_EVENTUALES = { obra: "1.4", consultoria: "2.5" };
+
+// Siguiente código libre para una etapa nueva del árbol (`1.6`, `2.7`…). Salta el
+// de los trámites eventuales aunque el árbol no lo use.
+export const siguienteCodigoEtapa = (arbol, ambito) => {
+  const prefijo = `${arbol.codigo}.`;
+  const numeros = (arbol.etapas || [])
+    .map((e) => String(e.codigo))
+    .filter((c) => c.startsWith(prefijo) && !c.slice(prefijo.length).includes("."))
+    .map((c) => Number(c.slice(prefijo.length)))
+    .filter(Number.isFinite);
+  numeros.push(ultimoNumero(PREFIJO_EVENTUALES[ambito]));
+  return `${prefijo}${Math.max(...numeros) + 1}`;
+};
+
+// Siguiente código libre para una sección nueva de la etapa: un hijo directo del
+// código de la etapa que no usen otra sección ni los hitos de una sección que
+// comparte el código de la etapa (así `1.2.10` evita los hitos 1.2.1 a 1.2.9).
+export const siguienteCodigoSeccion = (etapa) => {
+  const prefijo = `${etapa.codigo}.`;
+  const hijoDirecto = (c) => String(c).startsWith(prefijo) && !String(c).slice(prefijo.length).includes(".");
+  const usados = [];
+  for (const seccion of etapa.secciones || []) {
+    if (hijoDirecto(seccion.codigo)) usados.push(seccion.codigo);
+    for (const h of seccion.hitos || []) if (hijoDirecto(h.codigo)) usados.push(h.codigo);
+  }
+  const numeros = usados.map(ultimoNumero).filter(Number.isFinite);
+  return `${prefijo}${Math.max(0, ...numeros) + 1}`;
+};
+
+// ------------------------------- PASOS -------------------------------
+// Solo la forma y la limpieza de la lista editable (§5.5). La lógica del flujo
+// (plazos, movimientos, estado) no está aquí.
+export const RESPONSABLES_PASO = ["contratista", "supervision", "entidad"];
+export const TIPOS_REGISTRO_PASO = ["asiento", "presentacion", "respuesta", "otro"];
+export const AL_VENCER_PASO = ["aviso", "silencio_positivo"];
+export const ALERTAS_POR_DEFECTO = [5, 3, 1];
+
+// Texto → clave: minúsculas, sin tildes, con guiones bajos.
+export const slugClave = (texto) =>
+  String(texto || "")
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+
+// Clave a partir de un nombre que no choque con las `usadas`.
+export const claveUnica = (nombre, usadas = []) => {
+  const base = slugClave(nombre) || "paso";
+  const ocupadas = new Set(usadas);
+  if (!ocupadas.has(base)) return base;
+  let n = 2;
+  while (ocupadas.has(`${base}_${n}`)) n += 1;
+  return `${base}_${n}`;
+};
+
+export const pasoNuevo = () => ({
+  clave: "",
+  nombre: "",
+  responsable: "contratista",
+  tipoRegistro: "presentacion",
+  plazoDias: 0,
+  habiles: true,
+  desde: "",
+  alertas: [...ALERTAS_POR_DEFECTO],
+  alVencer: "aviso",
+  verificado: false,
+});
+
+// Lista de números a partir de un texto separado por comas ("5, 3, 1").
+export const alertasDesdeTexto = (texto) =>
+  [...new Set(String(texto ?? "").split(/[,;\s]+/).map(Number).filter((n) => Number.isFinite(n) && n >= 0))]
+    .sort((a, b) => b - a);
+
+// Deja la lista de pasos lista para guardarse: campos por defecto, clave (del
+// nombre si está vacía, única en la lista) y `desde` solo si apunta a un paso
+// anterior. No cambia las claves que ya existen.
+export const normalizarPasos = (pasos) => {
+  const salida = [];
+  for (const crudo of Array.isArray(pasos) ? pasos : []) {
+    const base = pasoNuevo();
+    const paso = { ...base, ...crudo };
+    const usadas = salida.map((p) => p.clave);
+    paso.nombre = String(paso.nombre ?? "").trim();
+    const clave = slugClave(paso.clave) || "";
+    paso.clave = clave && !usadas.includes(clave) ? clave : claveUnica(clave || paso.nombre, usadas);
+    if (!RESPONSABLES_PASO.includes(paso.responsable)) paso.responsable = base.responsable;
+    if (!TIPOS_REGISTRO_PASO.includes(paso.tipoRegistro)) paso.tipoRegistro = base.tipoRegistro;
+    if (!AL_VENCER_PASO.includes(paso.alVencer)) paso.alVencer = base.alVencer;
+    paso.plazoDias = Math.max(0, Number(paso.plazoDias) || 0);
+    paso.habiles = paso.habiles !== false;
+    paso.verificado = paso.verificado === true;
+    paso.alertas = Array.isArray(paso.alertas)
+      ? [...new Set(paso.alertas.map(Number).filter((n) => Number.isFinite(n) && n >= 0))].sort((a, b) => b - a)
+      : [...ALERTAS_POR_DEFECTO];
+    paso.desde = usadas.includes(paso.desde) ? paso.desde : "";
+    salida.push(paso);
+  }
+  return salida;
 };
 
 // Genera los hitos de un contrato nuevo desde el catálogo almacenado. Omite las
@@ -788,7 +932,7 @@ export const listarHitosOpcionales = (tipo, catalogo) =>
 export const crearTareaEventual = (tramite, clave, existentes = [], catalogo, feriados) => {
   const modelo = listarEventuales(tramite.tipo_objeto, catalogo).find((x) => x.clave === clave);
   if (!modelo) return null;
-  const prefijo = esConsultoria(tramite.tipo_objeto) ? "2.5" : "1.4";
+  const prefijo = PREFIJO_EVENTUALES[ambitoDe(tramite.tipo_objeto)];
   const etapa = { codigo: prefijo, nombre: "Modificaciones y ampliaciones" };
   const seccion = { codigo: prefijo, nombre: "Modificaciones y ampliaciones" };
   const numeros = existentes

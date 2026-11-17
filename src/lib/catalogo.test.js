@@ -149,7 +149,8 @@ describe("crearTareas con el catálogo almacenado", () => {
   it("un hito propio recibe el correlativo siguiente de su sección, aunque esté en medio", () => {
     const cat = catalogoSemilla();
     const seccion = seccionPorCodigo(cat.obra, "1.1");
-    const propio = { ...hitoPorClave(cat.obra, "1.1.5"), id: "x", clave: "cat_abc", nombre: "Propio" };
+    // Sin `codigo`: así llegan los hitos de catálogos guardados antes de ese campo.
+    const propio = { ...hitoPorClave(cat.obra, "1.1.5"), id: "x", clave: "cat_abc", codigo: undefined, nombre: "Propio" };
     seccion.hitos.splice(1, 0, propio);
     const tareas = crearTareas(T001, cat, FERIADOS_2026);
     const codigos = tareas.map((t) => t.codigo);

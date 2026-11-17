@@ -16,6 +16,7 @@ import {
   aplicarCambiosPlantilla,
   plantillaDesdeHitoPersonal,
   seccionPara,
+  asignarCodigos,
   ambitoDe,
   tipoDeAmbito,
   AMBITOS,
@@ -171,10 +172,17 @@ const read = () => {
         if (!Array.isArray(data.cargos)) data.cargos = [];
         // Un v7 guardado antes del catálogo almacenado: se funde una vez y se
         // guarda enseguida, para que los ids del catálogo no cambien entre lecturas.
+        let guardar = false;
         if (!data.catalogo || typeof data.catalogo !== "object") {
           data.catalogo = fundirCatalogo(data.plantillasDocs, data.catalogoHitos);
           delete data.plantillasDocs;
           delete data.catalogoHitos;
+          guardar = true;
+        }
+        // Un catálogo guardado antes de que los hitos llevaran `codigo`: se les
+        // da el código que ya tenían por regla, una sola vez.
+        if (asignarCodigos(data.catalogo)) guardar = true;
+        if (guardar) {
           try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
         }
         return data;
@@ -868,6 +876,7 @@ export const addTareaEventual = (tramiteId, clave) => {
 const clonar = (valor) => JSON.parse(JSON.stringify(valor));
 
 const MSG_CATALOGO_INVALIDO = "El catálogo no tiene la forma esperada.";
+const MSG_CATALOGO_DUPLICADO = "El catálogo tiene hitos duplicados.";
 
 const ETIQUETAS_CAMPO = {
   docs: "documentos requeridos",
@@ -886,6 +895,22 @@ const describirCampos = (campos) => [...new Set(campos)].map((c) => ETIQUETAS_CA
 
 const anotarCatalogo = (data, accion, objetoId, detalle) =>
   anotarHistorial(data, { accion, objeto: "catalogo", objetoId, detalle });
+
+// Cada plantilla tiene un id propio, y una clave que la identifica: la de un
+// hito o sección recurrente es única en todo el catálogo; la de un trámite
+// eventual o un hito opcional, única en su tipo de contrato (la misma clave
+// puede estar en Obra y en Consultoría).
+const validarSinDuplicados = (catalogo) => {
+  const ids = new Set();
+  const claves = new Set();
+  recorrerPlantillas(catalogo, ({ tipo, ambito, plantilla }) => {
+    const ambitoClave = tipo === "eventual" || tipo === "opcional" ? `${tipo}:${ambito}` : "hito";
+    const clave = `${ambitoClave}|${plantilla.clave}`;
+    if (ids.has(plantilla.id) || (plantilla.clave !== "" && claves.has(clave))) throw new Error(MSG_CATALOGO_DUPLICADO);
+    ids.add(plantilla.id);
+    claves.add(clave);
+  });
+};
 
 // Deja el catálogo con la forma que se guarda: ids en etapas, secciones y
 // plantillas (los existentes se conservan) y los valores por defecto de cada
@@ -913,6 +938,8 @@ const normalizarCatalogo = (entrada) => {
     const origen = cat[grupo] && typeof cat[grupo] === "object" ? cat[grupo] : {};
     cat[grupo] = Object.fromEntries(AMBITOS.map((a) => [a, (Array.isArray(origen[a]) ? origen[a] : []).map(completarPlantilla)]));
   }
+  asignarCodigos(cat);
+  validarSinDuplicados(cat);
   return cat;
 };
 
@@ -934,13 +961,18 @@ export const guardarCatalogo = (catalogo, detalle) => {
 
 // Inserta un hito de la semilla en su sección actual, antes del primer hito con
 // un código mayor, para que vuelva a su lugar.
-const reinsertarHito = (arbol, original) => {
+const reinsertarHito = (catalogo, original) => {
+  const arbol = catalogo[original.ambito];
   const exacta = arbol.etapas.flatMap((e) => e.secciones || []).find((s) => s.codigo === original.seccion.codigo && !s.recurrente);
   const seccion = exacta || seccionPara(arbol, original.etapa.codigo, original.etapa.nombre).seccion;
   const comparar = (a, b) => String(a).localeCompare(String(b), "es", { numeric: true });
   const indice = seccion.hitos.findIndex((h) => /^\d+(\.\d+)+$/.test(h.clave) && comparar(h.clave, original.plantilla.clave) > 0);
+  // Si el editor reordenó la sección, su código original puede estar ocupado: en
+  // ese caso recibe el siguiente libre.
+  if (seccion.hitos.some((h) => h.codigo === original.plantilla.codigo)) delete original.plantilla.codigo;
   if (indice === -1) seccion.hitos.push(original.plantilla);
   else seccion.hitos.splice(indice, 0, original.plantilla);
+  asignarCodigos(catalogo);
 };
 
 const reinsertarSeccion = (arbol, original) => {
@@ -950,6 +982,18 @@ const reinsertarSeccion = (arbol, original) => {
     arbol.etapas.push(etapa);
   }
   etapa.secciones.push(original.seccion);
+};
+
+// Cuántas plantillas del catálogo actual no están en la semilla (hitos,
+// trámites eventuales y hitos opcionales agregados por el usuario).
+const contarPropios = (actual, semilla) => {
+  const claves = new Set();
+  recorrerPlantillas(semilla, ({ tipo, ambito, plantilla }) => claves.add(`${tipo}|${ambito}|${plantilla.clave}`));
+  let propios = 0;
+  recorrerPlantillas(actual, ({ tipo, ambito, plantilla }) => {
+    if (tipo !== "recurrente" && !claves.has(`${tipo}|${ambito}|${plantilla.clave}`)) propios += 1;
+  });
+  return propios;
 };
 
 // Sin `ruta`: vuelve a la semilla completa (los hitos propios se pierden).
@@ -962,8 +1006,10 @@ export const restaurarCatalogo = (ruta) => {
   const data = read();
   exigirEn(data, "catalogo");
   if (ruta === undefined || ruta === null || ruta === "") {
-    data.catalogo = catalogoSemilla();
-    anotarCatalogo(data, "restaurar", "catalogo", "Se restauró el catálogo original completo.");
+    const semilla = catalogoSemilla();
+    const propios = contarPropios(data.catalogo, semilla);
+    data.catalogo = semilla;
+    anotarCatalogo(data, "restaurar", "catalogo", `Se restauró el catálogo original completo.${propios ? ` Se quitaron ${propios} hito${propios === 1 ? "" : "s"} propio${propios === 1 ? "" : "s"}.` : ""}`);
     write(data);
     return clonar(data.catalogo);
   }
@@ -973,13 +1019,16 @@ export const restaurarCatalogo = (ruta) => {
     const actuales = ubicarPlantillas(data.catalogo, ruta)
       .filter((u) => u.tipo === original.tipo && u.ambito === original.ambito);
     if (actuales.length === 0) {
-      if (original.tipo === "hito") reinsertarHito(data.catalogo[original.ambito], original);
+      if (original.tipo === "hito") reinsertarHito(data.catalogo, original);
       else if (original.tipo === "recurrente") reinsertarSeccion(data.catalogo[original.ambito], original);
       else data.catalogo[original.tipo === "eventual" ? "eventuales" : "opcionales"][original.ambito].push(original.plantilla);
       continue;
     }
     for (const u of actuales) {
+      // Conserva el id y, en un hito, su código actual (el editor puede haber
+      // renumerado la sección).
       const restaurada = { ...clonar(original.plantilla), id: u.plantilla.id };
+      if (u.tipo === "hito" && u.plantilla.codigo) restaurada.codigo = u.plantilla.codigo;
       if (u.tipo === "recurrente") {
         u.seccion.recurrente = original.seccion.recurrente;
         u.seccion.diaLimite = original.seccion.diaLimite;
@@ -1059,6 +1108,7 @@ export const agregarCatalogoHito = (hito) => {
   const primera = arbol.etapas[0];
   const { etapa, seccion } = seccionPara(arbol, hito.etapaCodigo || primera?.codigo, hito.etapaNombre || primera?.nombre);
   seccion.hitos.push(plantilla);
+  asignarCodigos(data.catalogo);
   anotarCatalogo(data, "agregar", plantilla.id, `Hito «${plantilla.nombre}» agregado al catálogo de ${tipoDeAmbito(ambito)} en ${etapa.codigo} ${etapa.nombre}.`);
   write(data);
   return vistaHito({ ambito, etapa, seccion, plantilla });
@@ -1086,7 +1136,10 @@ export const actualizarCatalogoHito = (id, cambios = {}) => {
     const etapaDestino = c.etapaCodigo || u.etapa.codigo;
     if (ambitoDestino !== u.ambito || etapaDestino !== u.etapa.codigo) {
       u.lista.splice(u.lista.indexOf(u.plantilla), 1);
+      // En la sección nueva recibe el siguiente código libre.
+      delete u.plantilla.codigo;
       seccionPara(data.catalogo[ambitoDestino], etapaDestino, c.etapaNombre).seccion.hitos.push(u.plantilla);
+      asignarCodigos(data.catalogo);
       campos.push("ubicacion");
     }
   }
@@ -1190,7 +1243,7 @@ export const agregarMesSCTR = (tramiteId) => {
     tipo: "recurrente",
     plantilla: clave,
     clavePlantilla: clave,
-    docsRequeridos: plantilla?.docs || ultimo.docsRequeridos || [],
+    docsRequeridos: [...(plantilla?.docs || ultimo.docsRequeridos || [])],
     docCumplimiento: plantilla?.cumplimiento || ultimo.docCumplimiento || "",
     plazoDias: 0,
     plazoBase: "manual",

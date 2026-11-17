@@ -8,6 +8,7 @@ import Panel from "./pages/Panel.jsx";
 import Tramites from "./pages/Tramites.jsx";
 import TramiteDetalle from "./pages/TramiteDetalle.jsx";
 import Configuracion from "./pages/Configuracion.jsx";
+import Catalogo from "./pages/Catalogo.jsx";
 
 export default function App() {
   const [session, setSession] = useState(getSession());
@@ -56,6 +57,9 @@ export default function App() {
           <NavLink to="/tramites" className={({ isActive }) => (isActive ? "activo" : "")}>
             <span className="nav-ico" aria-hidden="true" /> Contratos
           </NavLink>
+          <NavLink to="/catalogo" className={({ isActive }) => (isActive ? "activo" : "")}>
+            <span className="nav-ico" aria-hidden="true" /> Catálogo
+          </NavLink>
           {verConfiguracion && (
             <NavLink to="/configuracion" className={({ isActive }) => (isActive ? "activo" : "")}>
               <span className="nav-ico" aria-hidden="true" /> Configuración
@@ -82,6 +86,7 @@ export default function App() {
           <Route path="/panel" element={<Panel />} />
           <Route path="/tramites" element={<Tramites />} />
           <Route path="/tramite/:id" element={<TramiteDetalle />} />
+          <Route path="/catalogo" element={<Catalogo />} />
           <Route path="/configuracion" element={<Configuracion onCambio={refrescarSesion} />} />
           <Route path="*" element={<Navigate to="/panel" replace />} />
         </Routes>
