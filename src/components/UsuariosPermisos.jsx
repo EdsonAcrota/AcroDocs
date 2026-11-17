@@ -27,7 +27,9 @@ function Mensajes({ aviso, error }) {
   );
 }
 
-export default function UsuariosPermisos() {
+// `onCambio` avisa a la app de que cambió algo que puede afectar al usuario actual
+// (su rol, sus contratos o la matriz de permisos) para que refresque la sesión.
+export default function UsuariosPermisos({ onCambio }) {
   const [usuarios, setUsuarios] = useState(() => listarUsuarios());
   const [matriz, setMatriz] = useState(() => getPermisosRoles());
   const [contratos] = useState(() => listarContratosAsignables());
@@ -80,6 +82,7 @@ export default function UsuariosPermisos() {
       }
       setUsuarios(listarUsuarios());
       setForm(null);
+      onCambio?.();
     } catch (err) {
       fallarUsuarios(err);
     }
@@ -92,6 +95,7 @@ export default function UsuariosPermisos() {
       actualizarUsuario(u.id, { activo: !u.activo });
       setUsuarios(listarUsuarios());
       avisarUsuarios(`Usuario “${u.nombre}” ${desactivar ? "desactivado" : "activado"}.`);
+      onCambio?.();
     } catch (err) {
       fallarUsuarios(err);
     }
@@ -101,6 +105,7 @@ export default function UsuariosPermisos() {
     if (activo && permiso.peligroso && !window.confirm(`“${permiso.nombre}” permite borrar información. ¿Otorgarlo a ${nombreRol(rol)}?`)) return;
     try {
       setMatriz(setPermisoRol(rol, permiso.clave, activo));
+      onCambio?.();
       setErrorMatriz("");
       setAvisoMatriz(`${nombreRol(rol)}: “${etiquetaCorta(permiso.nombre)}” ${activo ? "otorgado" : "quitado"}.`);
     } catch (err) {

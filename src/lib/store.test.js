@@ -775,3 +775,279 @@ describe("contratos asignables a un usuario", () => {
     expect(lista[0]).toEqual({ id: expect.any(String), codigo: expect.any(String), denominacion: expect.any(String) });
   });
 });
+
+describe("versiones de documentos", () => {
+  const MENSAJE_PERMISO = "No tienes permiso para esta acción.";
+  const meta = (n, extra = {}) => ({
+    id: `arch-${n}`,
+    archivoId: `arch-${n}`,
+    nombre: "Contrato.pdf",
+    mime: "application/pdf",
+    tamano: 1000 * n,
+    fecha: `2026-06-0${n}`,
+    tipoDoc: "Contrato",
+    ...extra,
+  });
+  const hitoDe = (tramiteId = "t-001") => store.listItems(tramiteId)[0];
+  const docsDe = (itemId) => store.getItem(itemId).documentos;
+
+  // Deja un hito con un documento ya cargado por el gerente y vuelve a la sesión pedida.
+  const conDocumentoCargado = (rol) => {
+    entrar("gerente");
+    const item = hitoDe();
+    store.agregarDocumento(item.id, meta(1));
+    const doc = docsDe(item.id)[0];
+    store.logout();
+    entrar(rol);
+    return { item, doc };
+  };
+
+  it("agregarDocumento guarda el documento en el hito", () => {
+    entrar("asis_adm");
+    const item = hitoDe();
+    const doc = store.agregarDocumento(item.id, meta(1));
+    expect(doc).toMatchObject({ archivoId: "arch-1", nombre: "Contrato.pdf", tipoDoc: "Contrato" });
+    expect(typeof doc.id).toBe("string");
+    expect(docsDe(item.id)).toEqual([doc]);
+  });
+
+  it("agregarDocumento exige subir y ver el contrato", () => {
+    const item = hitoDe();
+    expect(() => store.agregarDocumento(item.id, meta(1))).toThrow(MENSAJE_PERMISO); // sin sesión
+    entrar("consulta");
+    expect(() => store.agregarDocumento(item.id, meta(1))).toThrow(MENSAJE_PERMISO);
+    store.logout();
+    entrar("residente"); // solo ve t-001
+    const ajeno = hitoDe("t-002");
+    expect(() => store.agregarDocumento(ajeno.id, meta(2))).toThrow(MENSAJE_PERMISO);
+    expect(docsDe(ajeno.id)).toEqual([]);
+    expect(docsDe(item.id)).toEqual([]);
+  });
+
+  it("agregarDocumento sobre un hito inexistente lanza error", () => {
+    entrar("gerente");
+    expect(() => store.agregarDocumento("no-existe", meta(1))).toThrow("El hito no existe.");
+  });
+
+  it("reemplazarDocumento guarda la versión anterior", () => {
+    const { item, doc } = conDocumentoCargado("jefe");
+    const sesion = store.getSession();
+    const resultado = store.reemplazarDocumento(item.id, doc.id, meta(2, { nombre: "Contrato v2.pdf" }));
+
+    const [actual] = docsDe(item.id);
+    expect(docsDe(item.id)).toHaveLength(1);
+    expect(actual.id).toBe(doc.id); // conserva su id
+    expect(actual).toMatchObject({ archivoId: "arch-2", nombre: "Contrato v2.pdf", tamano: 2000, fecha: "2026-06-02" });
+    expect(actual.tipoDoc).toBe("Contrato");
+    expect(actual.versiones).toEqual([
+      {
+        archivoId: "arch-1",
+        nombre: "Contrato.pdf",
+        tamano: 1000,
+        fecha: "2026-06-01",
+        reemplazadoPor: sesion.nombre,
+        reemplazadoEl: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}/),
+      },
+    ]);
+    expect(resultado).toEqual(actual);
+    // el archivo anterior se conserva: no se borra de IndexedDB
+    expect(eliminarArchivo).not.toHaveBeenCalled();
+    // y el reemplazo queda en el historial
+    const [registro] = store.listarHistorial({ tramiteId: "t-001" });
+    expect(registro).toMatchObject({ accion: "reemplazar", objeto: "documento", objetoId: doc.id, tramiteId: "t-001" });
+    expect(registro.detalle).toContain("Contrato v2.pdf");
+  });
+
+  it("reemplazar varias veces acumula las versiones de la más antigua a la más reciente", () => {
+    const { item, doc } = conDocumentoCargado("jefe");
+    store.reemplazarDocumento(item.id, doc.id, meta(2));
+    store.reemplazarDocumento(item.id, doc.id, meta(3));
+    const [actual] = docsDe(item.id);
+    expect(actual.archivoId).toBe("arch-3");
+    expect(actual.versiones.map((v) => v.archivoId)).toEqual(["arch-1", "arch-2"]);
+  });
+
+  it("asis_tec puede agregarDocumento a un documento ya cargado sin tocar el anterior", () => {
+    const { item, doc } = conDocumentoCargado("asis_tec");
+    const antes = JSON.stringify(docsDe(item.id)[0]);
+    const nuevo = store.agregarDocumento(item.id, meta(2));
+    const docs = docsDe(item.id);
+    expect(docs).toHaveLength(2);
+    expect(JSON.stringify(docs[0])).toBe(antes); // el anterior queda intacto
+    expect(docs[0].versiones).toBeUndefined();
+    expect(docs[1]).toEqual(nuevo);
+    expect(docs[1].id).not.toBe(doc.id);
+    expect(eliminarArchivo).not.toHaveBeenCalled();
+  });
+
+  it("asis_tec no puede reemplazarDocumento", () => {
+    const { item, doc } = conDocumentoCargado("asis_tec");
+    const antes = JSON.stringify(docsDe(item.id));
+    expect(() => store.reemplazarDocumento(item.id, doc.id, meta(2))).toThrow(MENSAJE_PERMISO);
+    expect(JSON.stringify(docsDe(item.id))).toBe(antes);
+    expect(store.listarHistorial()).toEqual([]);
+  });
+
+  it("reemplazarDocumento falla si el hito o el documento no existen", () => {
+    const { item } = conDocumentoCargado("jefe");
+    expect(() => store.reemplazarDocumento("no-existe", "x", meta(2))).toThrow("El hito no existe.");
+    expect(() => store.reemplazarDocumento(item.id, "no-existe", meta(2))).toThrow("El documento no existe.");
+    expect(docsDe(item.id)[0].archivoId).toBe("arch-1");
+  });
+
+  it("eliminarDocumento exige borrar_doc", () => {
+    const { item, doc } = conDocumentoCargado("asis_adm");
+    expect(() => store.eliminarDocumento(item.id, doc.id)).toThrow(MENSAJE_PERMISO);
+    expect(docsDe(item.id)).toHaveLength(1);
+    expect(eliminarArchivo).not.toHaveBeenCalled();
+    expect(store.listarHistorial()).toEqual([]);
+  });
+
+  it("eliminarDocumento borra también los archivos de sus versiones y queda en historial", () => {
+    entrar("gerente");
+    const item = hitoDe();
+    store.agregarDocumento(item.id, meta(1));
+    const doc = docsDe(item.id)[0];
+    store.reemplazarDocumento(item.id, doc.id, meta(2));
+    store.reemplazarDocumento(item.id, doc.id, meta(3));
+    // un segundo documento del mismo hito no se toca
+    store.agregarDocumento(item.id, meta(4, { tipoDoc: "Otros", nombre: "Otros.pdf" }));
+
+    expect(store.eliminarDocumento(item.id, doc.id)).toBe(true);
+
+    expect(docsDe(item.id).map((d) => d.archivoId)).toEqual(["arch-4"]);
+    expect(eliminarArchivo.mock.calls.map((c) => c[0]).sort()).toEqual(["arch-1", "arch-2", "arch-3"]);
+    const [registro] = store.listarHistorial();
+    expect(registro).toMatchObject({ accion: "eliminar", objeto: "documento", objetoId: doc.id, tramiteId: "t-001" });
+    expect(registro.detalle).toContain("Contrato");
+    expect(registro.detalle).toContain("2 versiones");
+  });
+
+  it("eliminarDocumento devuelve false si el documento no existe", () => {
+    entrar("gerente");
+    const item = hitoDe();
+    expect(store.eliminarDocumento(item.id, "no-existe")).toBe(false);
+    expect(store.eliminarDocumento("no-existe", "x")).toBe(false);
+    expect(store.listarHistorial()).toEqual([]);
+  });
+});
+
+describe("guardarConfigFianzas con documentos cargados", () => {
+  const MENSAJE_PERMISO = "No tienes permiso para esta acción.";
+  const renovaciones = () => store.listItems("t-001").filter((i) => i.seccionCodigo === "1.2.10");
+  const docFianza = (n) => ({
+    id: `arch-f${n}`, archivoId: `arch-f${n}`, nombre: "Carta.pdf", tamano: 10, fecha: "2026-06-01", tipoDoc: "Carta fianza renovada",
+  });
+
+  // Pasa a renovación mensual (varios hitos) y deja un documento en el último.
+  const prepararMensual = () => {
+    entrar("gerente");
+    store.guardarConfigFianzas("t-001", { periodo: "mensual", tipos: ["fiel_cumplimiento"] });
+    const lista = renovaciones();
+    expect(lista.length).toBeGreaterThan(1);
+    const ultimo = lista[lista.length - 1];
+    store.agregarDocumento(ultimo.id, docFianza(1));
+    return { lista, ultimo };
+  };
+
+  it("quitar hitos con documentos exige borrar_hito y no cambia nada si falta", () => {
+    const { lista } = prepararMensual();
+    store.logout();
+    entrar("asis_adm");
+    const antes = JSON.stringify(store.listItems("t-001"));
+    expect(() => store.guardarConfigFianzas("t-001", { periodo: "anual", tipos: ["fiel_cumplimiento"] })).toThrow(MENSAJE_PERMISO);
+    expect(JSON.stringify(store.listItems("t-001"))).toBe(antes);
+    expect(renovaciones()).toHaveLength(lista.length);
+    expect(eliminarArchivo).not.toHaveBeenCalled();
+    expect(store.getConfigFianzas("t-001").periodo).toBe("mensual");
+    expect(store.listarHistorial()).toEqual([]);
+  });
+
+  it("con borrar_hito quita los hitos sobrantes, borra sus archivos y deja el historial", () => {
+    const { lista, ultimo } = prepararMensual();
+    store.guardarConfigFianzas("t-001", { periodo: "anual", tipos: ["fiel_cumplimiento"] });
+    expect(renovaciones()).toHaveLength(1);
+    expect(eliminarArchivo).toHaveBeenCalledWith("arch-f1");
+    const [registro] = store.listarHistorial();
+    expect(registro).toMatchObject({ accion: "eliminar", objeto: "hito", tramiteId: "t-001" });
+    expect(registro.detalle).toContain(ultimo.codigo);
+    expect(registro.detalle).toContain(lista[1].codigo);
+    expect(registro.detalle).toContain("1 documento");
+  });
+
+  it("sin documentos en los hitos sobrantes no exige borrar_hito ni escribe historial", () => {
+    entrar("gerente");
+    store.guardarConfigFianzas("t-001", { periodo: "mensual", tipos: ["fiel_cumplimiento"] });
+    store.logout();
+    entrar("asis_adm");
+    expect(() => store.guardarConfigFianzas("t-001", { periodo: "anual", tipos: ["fiel_cumplimiento"] })).not.toThrow();
+    expect(renovaciones()).toHaveLength(1);
+    expect(store.listarHistorial()).toEqual([]);
+  });
+
+  it("si los documentos caben en los hitos nuevos, tampoco exige borrar_hito", () => {
+    entrar("gerente");
+    const [primero] = renovaciones();
+    store.agregarDocumento(primero.id, docFianza(2));
+    store.logout();
+    entrar("asis_adm");
+    store.guardarConfigFianzas("t-001", { periodo: "mensual", tipos: ["fiel_cumplimiento"] });
+    expect(renovaciones()[0].documentos.map((d) => d.archivoId)).toEqual(["arch-f2"]);
+    expect(eliminarArchivo).not.toHaveBeenCalled();
+  });
+});
+
+describe("respaldo completo", () => {
+  it("exportarDatos exige el permiso respaldo", () => {
+    expect(() => store.exportarDatos()).toThrow("No tienes permiso para esta acción."); // sin sesión
+    entrar("jefe");
+    expect(() => store.exportarDatos()).toThrow("No tienes permiso para esta acción.");
+  });
+
+  it("exportarDatos incluye los datos pero no las contraseñas", () => {
+    entrar("socio");
+    const texto = store.exportarDatos();
+    const exportado = JSON.parse(texto);
+    expect(exportado.tramites).toHaveLength(2);
+    expect(exportado.items.length).toBeGreaterThan(0);
+    expect(exportado.usuarios).toHaveLength(9);
+    expect(exportado.usuarios.every((u) => !("password" in u))).toBe(true);
+    expect(exportado.usuarios.find((u) => u.rol === "residente")).toMatchObject({ email: "residente@acrodocs.local", contratos: ["t-001"] });
+    expect(exportado.permisosRoles.consulta).toEqual(MATRIZ_INICIAL.consulta);
+    expect(texto).not.toContain("residente123");
+    expect(texto).not.toContain("gerente123");
+    // la exportación no altera los datos guardados
+    expect(leerV7().usuarios.every((u) => typeof u.password === "string")).toBe(true);
+  });
+});
+
+describe("tareas visibles según el contrato", () => {
+  const hacerVencer = () => {
+    entrar("gerente");
+    for (const id of ["t-001", "t-002"]) {
+      const item = store.listItems(id).find((i) => i.estado === "Pendiente");
+      store.updateItem(item.id, { fecha_limite: "2026-01-01" });
+    }
+    store.logout();
+  };
+
+  it("listAllTareas y tareasConPlazo solo consideran los contratos que el usuario ve", () => {
+    hacerVencer();
+    entrar("residente"); // solo ve t-001
+    const todas = store.listAllTareas();
+    expect(todas.length).toBeGreaterThan(0);
+    expect(todas.every((t) => t.tramite_id === "t-001")).toBe(true);
+    const conPlazo = store.tareasConPlazo();
+    expect(conPlazo.length).toBeGreaterThan(0);
+    expect(conPlazo.every((t) => t.tramite_id === "t-001")).toBe(true);
+  });
+
+  it("un rol con ver_todos ve las tareas de todos los contratos y sin sesión no hay ninguna", () => {
+    hacerVencer();
+    expect(store.listAllTareas()).toEqual([]);
+    expect(store.tareasConPlazo()).toEqual([]);
+    entrar("consulta");
+    expect(new Set(store.listAllTareas().map((t) => t.tramite_id))).toEqual(new Set(["t-001", "t-002"]));
+    expect(new Set(store.tareasConPlazo().map((t) => t.tramite_id))).toEqual(new Set(["t-001", "t-002"]));
+  });
+});

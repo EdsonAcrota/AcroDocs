@@ -710,6 +710,87 @@ export const removeItem = (id) => {
   write(data);
 };
 
+// ---------- Documentos de un hito ----------
+// Todo archivo nuevo pasa por estas tres funciones: cada una exige su permiso
+// sobre el contrato del hito y, cuando corresponde, deja el cambio y su registro
+// en el historial en una sola escritura (§5.1 y §5.9 regla 7).
+const ubicarDocumento = (data, itemId, docId) => {
+  const item = data.items.find((i) => i.id === itemId);
+  const doc = item ? (item.documentos || []).find((d) => d.id === docId) : null;
+  return { item, doc };
+};
+
+// Agregar otro archivo a un documento que ya tiene uno también es "subir":
+// el anterior queda intacto, así que nada se pierde.
+export const agregarDocumento = (itemId, meta = {}) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === itemId);
+  exigirEn(data, "subir", item?.tramite_id);
+  if (!item) throw new Error("El hito no existe.");
+  const doc = { ...meta, id: meta.id || uid() };
+  item.documentos = [...(item.documentos || []), doc];
+  write(data);
+  return doc;
+};
+
+// "Nueva versión": el documento conserva su id y apunta al archivo nuevo; el
+// archivo anterior pasa a `versiones` (sigue en IndexedDB y se puede descargar).
+export const reemplazarDocumento = (itemId, docId, meta = {}) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === itemId);
+  exigirEn(data, "reemplazar", item?.tramite_id);
+  if (!item) throw new Error("El hito no existe.");
+  const doc = (item.documentos || []).find((d) => d.id === docId);
+  if (!doc) throw new Error("El documento no existe.");
+  if (!meta.archivoId) throw new Error("Falta el archivo de la nueva versión.");
+
+  const usuario = usuarioActual(data);
+  const anterior = {
+    archivoId: doc.archivoId,
+    nombre: doc.nombre,
+    tamano: doc.tamano,
+    fecha: doc.fecha,
+    reemplazadoPor: usuario?.nombre || "Sistema",
+    reemplazadoEl: new Date().toISOString(),
+  };
+  doc.versiones = [...(doc.versiones || []), anterior];
+  doc.archivoId = meta.archivoId;
+  doc.nombre = meta.nombre;
+  doc.tamano = meta.tamano;
+  doc.fecha = meta.fecha;
+  if (meta.mime !== undefined) doc.mime = meta.mime;
+  anotarHistorial(data, {
+    accion: "reemplazar",
+    objeto: "documento",
+    objetoId: doc.id,
+    tramiteId: item.tramite_id,
+    detalle: `${item.codigo} — ${doc.tipoDoc || "Documento"}: nueva versión ${doc.versiones.length + 1} («${doc.nombre}»); se conserva la anterior («${anterior.nombre}»)`,
+  });
+  write(data);
+  return doc;
+};
+
+// Borra el documento, sus versiones y sus archivos de IndexedDB. Solo `borrar_doc`.
+export const eliminarDocumento = (itemId, docId) => {
+  const data = read();
+  const { item, doc } = ubicarDocumento(data, itemId, docId);
+  exigirEn(data, "borrar_doc", item?.tramite_id);
+  if (!item || !doc) return false;
+  borrarArchivosDeItems([{ documentos: [doc] }]);
+  item.documentos = item.documentos.filter((d) => d.id !== docId);
+  const versiones = (doc.versiones || []).length;
+  const conVersiones = versiones === 0 ? "" : ` y ${versiones === 1 ? "1 versión anterior" : `${versiones} versiones anteriores`}`;
+  anotarHistorial(data, {
+    accion: "eliminar",
+    objeto: "documento",
+    objetoId: doc.id,
+    tramiteId: item.tramite_id,
+    detalle: `${item.codigo} — ${doc.tipoDoc || "Documento"}: «${doc.nombre}»${conVersiones}`,
+  });
+  write(data);
+  return true;
+};
+
 export const addTareaEventual = (tramiteId, clave) => {
   const data = read();
   const tramite = data.tramites.find((t) => t.id === tramiteId);
@@ -979,10 +1060,21 @@ export const guardarConfigFianzas = (tramiteId, config) => {
       n += 1;
     }
   }
-  for (let i = nuevas.length; i < documentos.length; i += 1) {
-    for (const doc of documentos[i] || []) {
-      if (doc.archivoId) eliminarArchivo(doc.archivoId).catch(() => {});
-    }
+  // Los hitos que sobran con la nueva configuración se eliminan. Si alguno tiene
+  // documentos, es una eliminación de hitos: exige `borrar_hito`, borra los
+  // archivos (versiones incluidas) y queda en el historial en la misma escritura.
+  const sobrantes = anteriores.slice(nuevas.length);
+  const documentosSobrantes = sobrantes.reduce((n, i) => n + (i.documentos || []).length, 0);
+  if (documentosSobrantes > 0) {
+    exigirEn(data, "borrar_hito", tramiteId);
+    borrarArchivosDeItems(sobrantes);
+    anotarHistorial(data, {
+      accion: "eliminar",
+      objeto: "hito",
+      objetoId: sobrantes.map((i) => i.id).join(","),
+      tramiteId,
+      detalle: `Renovaciones de carta fianza (${tramite.codigo}): se quitaron ${sobrantes.length} hito(s) — ${sobrantes.map((i) => i.codigo).join(", ")} — con ${documentosSobrantes} documento(s)`,
+    });
   }
   data.items = ordenarTareas([...restantes, ...nuevas]);
   if (!data.configFianzas || typeof data.configFianzas !== "object") data.configFianzas = {};
@@ -1039,13 +1131,18 @@ export const resumenTramite = (tramiteId) => {
   };
 };
 
+// Solo tareas de los contratos que la sesión puede ver: de aquí salen los KPI,
+// las alertas del Panel y la descarga de todos los archivos.
 export const listAllTareas = () => {
   const data = read();
-  return data.tramites.flatMap((t) =>
-    data.items
-      .filter((i) => i.tramite_id === t.id)
-      .map((i) => ({ ...i, tramite_codigo: t.codigo, tramite_denominacion: t.denominacion }))
-  );
+  const usuario = usuarioActual(data);
+  return data.tramites
+    .filter((t) => veContrato(data.permisosRoles, usuario, t.id))
+    .flatMap((t) =>
+      data.items
+        .filter((i) => i.tramite_id === t.id)
+        .map((i) => ({ ...i, tramite_codigo: t.codigo, tramite_denominacion: t.denominacion }))
+    );
 };
 
 export const tareasConPlazo = () =>
@@ -1061,7 +1158,13 @@ export const estadoPlazo = (tarea) => {
   return "vigente";
 };
 
-export const exportarDatos = () => JSON.stringify(read(), null, 2);
+// Respaldo completo en JSON. Exige `respaldo` y nunca incluye las contraseñas demo.
+export const exportarDatos = () => {
+  const data = read();
+  exigirEn(data, "respaldo");
+  const copia = { ...data, usuarios: (data.usuarios || []).map(usuarioPublico) };
+  return JSON.stringify(copia, null, 2);
+};
 
 export const hoyISO = hoy;
 export const sumarDiasCalendario = sumarDias;

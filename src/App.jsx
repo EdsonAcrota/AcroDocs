@@ -1,6 +1,7 @@
-import React, { useEffect, useState } from "react";
-import { Routes, Route, Navigate, NavLink, useNavigate } from "react-router-dom";
+import React, { useCallback, useEffect, useState } from "react";
+import { Routes, Route, Navigate, NavLink, useLocation, useNavigate } from "react-router-dom";
 import { getSession, logout, puede } from "./lib/store.js";
+import { ROLES } from "./lib/permisos.js";
 import { hasSupabase } from "./lib/supabase.js";
 import Login from "./pages/Login.jsx";
 import Panel from "./pages/Panel.jsx";
@@ -11,6 +12,16 @@ import Configuracion from "./pages/Configuracion.jsx";
 export default function App() {
   const [session, setSession] = useState(getSession());
   const navigate = useNavigate();
+  const location = useLocation();
+
+  // La ficha de la sesión se resuelve contra los usuarios guardados. Se vuelve a
+  // leer al cambiar de ruta y cuando una pantalla avisa de un cambio que puede
+  // afectar al usuario actual (su rol, sus contratos, la matriz de permisos).
+  const refrescarSesion = useCallback(() => setSession(getSession()), []);
+
+  useEffect(() => {
+    refrescarSesion();
+  }, [location.pathname, refrescarSesion]);
 
   useEffect(() => {
     if (!session) navigate("/", { replace: true });
@@ -23,7 +34,7 @@ export default function App() {
     setSession(null);
   };
 
-  const rolTxt = { admin: "Administrador", logistica: "Logística", area_usuaria: "Área usuaria", legal: "Asesoría Legal", lectura: "Solo lectura" };
+  const rolNombre = ROLES.find((r) => r.clave === session.rol)?.nombre || session.rol;
   const inicial = (session.nombre || "U").slice(0, 1).toUpperCase();
   // Configuración se muestra a quien tenga permiso sobre alguna de sus secciones.
   const verConfiguracion = ["usuarios", "feriados", "respaldo", "catalogo"].some((permiso) => puede(permiso));
@@ -56,7 +67,7 @@ export default function App() {
             <div className="avatar">{inicial}</div>
             <div className="usuario-datos">
               <strong>{session.nombre}</strong>
-              <span>{rolTxt[session.rol] || session.rol}</span>
+              <span>{rolNombre}</span>
             </div>
           </div>
           <button className="btn salir" onClick={salir}>Cerrar sesión</button>
@@ -68,10 +79,10 @@ export default function App() {
       <main className="contenido">
         <Routes>
           <Route path="/" element={<Navigate to="/panel" replace />} />
-          <Route path="/panel" element={<Panel session={session} />} />
-          <Route path="/tramites" element={<Tramites session={session} />} />
-          <Route path="/tramite/:id" element={<TramiteDetalle session={session} />} />
-          <Route path="/configuracion" element={<Configuracion session={session} />} />
+          <Route path="/panel" element={<Panel />} />
+          <Route path="/tramites" element={<Tramites />} />
+          <Route path="/tramite/:id" element={<TramiteDetalle />} />
+          <Route path="/configuracion" element={<Configuracion onCambio={refrescarSesion} />} />
           <Route path="*" element={<Navigate to="/panel" replace />} />
         </Routes>
       </main>

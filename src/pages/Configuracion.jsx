@@ -7,15 +7,23 @@ import {
 import { catalogoDe } from "../lib/catalogo.js";
 import { descargarTexto, descargarComoZip } from "../lib/archivos.js";
 import UsuariosPermisos from "../components/UsuariosPermisos.jsx";
+import HistorialLista from "../components/HistorialLista.jsx";
 
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { weekday: "long", day: "2-digit", month: "long", year: "numeric" }) : "—");
 
-export default function Configuracion() {
+export default function Configuracion({ onCambio }) {
   // Cada sección se muestra según el permiso que la gobierna (§5.1).
   const verUsuarios = puede("usuarios");
   const verFeriados = puede("feriados");
   const verCatalogo = puede("catalogo");
   const verRespaldo = puede("respaldo");
+  const verHistorial = verUsuarios || verCatalogo;
+  // Cada cambio de usuarios o permisos vuelve a pintar el historial y avisa a la app.
+  const [, setRevision] = useState(0);
+  const alCambiar = () => {
+    setRevision((n) => n + 1);
+    onCambio?.();
+  };
   const [hayRespaldoV6] = useState(() => verRespaldo && getRespaldoV6() !== null);
   const [feriados, setFeriados] = useState(getFeriados());
   const [nueva, setNueva] = useState("");
@@ -66,8 +74,12 @@ export default function Configuracion() {
   };
 
   const descargarDatos = () => {
-    descargarTexto(exportarDatos(), "acrodocs_respaldo.json");
-    setMensaje("Respaldo de datos descargado.");
+    try {
+      descargarTexto(exportarDatos(), "acrodocs_respaldo.json");
+      setMensaje("Respaldo de datos descargado.");
+    } catch (error) {
+      setMensaje(error?.message || "No se pudo descargar el respaldo.");
+    }
   };
 
   const descargarRespaldoV6 = () => {
@@ -175,7 +187,7 @@ export default function Configuracion() {
 
       {mensaje && <div className="nota-info">{mensaje}</div>}
 
-      {verUsuarios && <UsuariosPermisos />}
+      {verUsuarios && <UsuariosPermisos onCambio={alCambiar} />}
 
       {verFeriados && (
       <div className="grid-2">
@@ -305,6 +317,18 @@ export default function Configuracion() {
       </div>
       )}
 
+      {verHistorial && (
+      <div className="tarjeta">
+        <div className="tarjeta-cab">
+          <h3>Historial de cambios</h3>
+          <span className="ref">Catálogo, permisos y usuarios</span>
+        </div>
+        <div className="cuerpo">
+          <HistorialLista objeto={["catalogo", "permisos", "usuarios"]} vacio="Todavía no hay cambios de catálogo, permisos ni usuarios." />
+        </div>
+      </div>
+      )}
+
       {verRespaldo && (
       <div className="tarjeta">
         <div className="tarjeta-cab"><h3>Respaldo y descargas</h3></div>
@@ -316,7 +340,7 @@ export default function Configuracion() {
               <button type="button" className="btn" onClick={descargarRespaldoV6}>Descargar respaldo previo a la migración</button>
             )}
           </div>
-          <div className="ref">El respaldo JSON contiene contratos, hitos, plantillas, feriados y configuración. Los archivos se agrupan por contrato e hito dentro del ZIP.</div>
+          <div className="ref">El respaldo JSON contiene contratos, hitos, plantillas, feriados, usuarios (sin contraseñas), permisos, historial y configuración. Los archivos se agrupan por contrato e hito dentro del ZIP.</div>
           {hayRespaldoV6 && (
             <div className="ref">El respaldo previo a la migración es la copia exacta de los datos tal como estaban antes de pasar a la versión con usuarios y permisos.</div>
           )}

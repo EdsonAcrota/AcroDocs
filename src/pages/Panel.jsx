@@ -1,14 +1,17 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import {
-  listTramites, listItems, resumenTramite, tareasConPlazo, hoyISO,
+  listTramites, listItems, resumenTramite, tareasConPlazo, hoyISO, puede,
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 
-export default function Panel({ session }) {
+export default function Panel() {
+  // Las alertas de vencimiento son para los roles con `alertas`, y solo sobre los
+  // contratos que el usuario ve (listTramites y tareasConPlazo ya filtran).
+  const verAlertas = puede("alertas");
   const tramites = listTramites();
   const resumenes = new Map(tramites.map((t) => [t.id, resumenTramite(t.id)]));
   const pendientes = [...resumenes.values()].reduce((n, r) => n + r.pendientes, 0);
@@ -19,7 +22,7 @@ export default function Panel({ session }) {
   );
 
   const alertas = [];
-  for (const t of tareasConPlazo()) {
+  for (const t of verAlertas ? tareasConPlazo() : []) {
     const dias = diasEntre(hoyISO(), t.fecha_limite);
     const silencio = t.silencioPositivo && dias < 0;
     if (dias < 0) {
@@ -37,7 +40,7 @@ export default function Panel({ session }) {
     }
   }
 
-  for (const t of tramites) {
+  for (const t of verAlertas ? tramites : []) {
     const dias = t.fecha_fin ? diasEntre(hoyISO(), t.fecha_fin) : null;
     if (dias !== null && dias >= 0 && dias <= 30) {
       alertas.push({
@@ -65,7 +68,9 @@ export default function Panel({ session }) {
         <div className="kpi"><div className="kpi-ico azul" aria-hidden="true">CT</div><div><div className="valor">{tramites.length}</div><div className="rotulo">Contratos registrados</div></div></div>
         <div className="kpi"><div className="kpi-ico violeta" aria-hidden="true">HI</div><div><div className="valor">{pendientes}</div><div className="rotulo">Hitos pendientes</div></div></div>
         <div className="kpi"><div className="kpi-ico ambar" aria-hidden="true">RQ</div><div><div className="valor">{docsPendientes}</div><div className="rotulo">Requisitos sin archivo</div></div></div>
-        <div className="kpi"><div className="kpi-ico rojo" aria-hidden="true">AL</div><div><div className="valor">{alertas.length}</div><div className="rotulo">Alertas de plazo</div></div></div>
+        {verAlertas && (
+          <div className="kpi"><div className="kpi-ico rojo" aria-hidden="true">AL</div><div><div className="valor">{alertas.length}</div><div className="rotulo">Alertas de plazo</div></div></div>
+        )}
       </div>
 
       <div className="grid-2">
@@ -89,6 +94,7 @@ export default function Panel({ session }) {
           </div>
         </div>
 
+        {verAlertas && (
         <div className="tarjeta">
           <div className="tarjeta-cab">
             <h3>Alertas y vencimientos</h3>
@@ -106,6 +112,7 @@ export default function Panel({ session }) {
             {alertas.length > 10 && <div className="ref">Hay {alertas.length - 10} alerta(s) más en los expedientes.</div>}
           </div>
         </div>
+        )}
       </div>
 
       <div className="tarjeta">

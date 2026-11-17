@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
-import { listTramites, createTramite, resumenTramite } from "../lib/store.js";
+import { listTramites, createTramite, resumenTramite, puede } from "../lib/store.js";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE") : "—");
@@ -11,8 +11,8 @@ const inicial = {
   fecha_suscripcion: "", fecha_inicio: "", fecha_fin: "", estado: "En ejecución",
 };
 
-export default function Tramites({ session }) {
-  const soloLectura = session?.rol === "lectura";
+export default function Tramites() {
+  const puedeCrear = puede("crear");
   const [tramites, setTramites] = useState(listTramites());
   const [buscar, setBuscar] = useState("");
   const [estado, setEstado] = useState("Todos");
@@ -28,7 +28,7 @@ export default function Tramites({ session }) {
 
   const guardar = (e) => {
     e.preventDefault();
-    if (soloLectura) return;
+    if (!puedeCrear) return;
     if (!form.codigo.trim() || !form.denominacion.trim()) {
       setError("El código y la denominación son obligatorios.");
       return;
@@ -51,7 +51,7 @@ export default function Tramites({ session }) {
           <h2>Contratos de ejecución</h2>
           <p>Cada contrato abre un expediente numerado con hitos, plazos y documentos.</p>
         </div>
-        {!soloLectura && <button className="btn primario" onClick={() => setMostrarForm(true)}>+ Nuevo contrato</button>}
+        {puedeCrear && <button className="btn primario" onClick={() => setMostrarForm(true)}>+ Nuevo contrato</button>}
       </div>
 
       <div className="tarjeta">
@@ -107,7 +107,7 @@ export default function Tramites({ session }) {
         </div>
       </div>
 
-      {mostrarForm && (
+      {puedeCrear && mostrarForm && (
         <div className="modal-fondo" onClick={(e) => e.target === e.currentTarget && setMostrarForm(false)}>
           <form className="modal" onSubmit={guardar}>
             <div className="modal-cab">

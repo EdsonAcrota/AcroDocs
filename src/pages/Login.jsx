@@ -1,10 +1,14 @@
 import React, { useState } from "react";
 import { loginDemo } from "../lib/store.js";
+import { ROLES } from "../lib/permisos.js";
+import { USUARIOS_DEMO } from "../lib/migracion.js";
 import { hasSupabase } from "../lib/supabase.js";
 
+const nombreRol = (clave) => ROLES.find((r) => r.clave === clave)?.nombre || clave;
+
 export default function Login({ onLogin }) {
-  const [email, setEmail] = useState("admin@acrodocs.local");
-  const [password, setPassword] = useState("admin123");
+  const [email, setEmail] = useState("gerente@acrodocs.local");
+  const [password, setPassword] = useState("gerente123");
   const [error, setError] = useState("");
 
   const entrar = (e) => {
@@ -13,6 +17,12 @@ export default function Login({ onLogin }) {
     const res = loginDemo(email, password);
     if (res.error) setError(res.error);
     else onLogin(res.session);
+  };
+
+  const usar = (usuario) => {
+    setEmail(usuario.email);
+    setPassword(usuario.password);
+    setError("");
   };
 
   return (
@@ -37,14 +47,20 @@ export default function Login({ onLogin }) {
 
         <div className="login-demo">
           <strong>Usuarios de demostración</strong>
-          <div><code>admin@acrodocs.local</code> / <code>admin123</code></div>
-          <details className="login-usuarios">
-            <summary>Ver todos los usuarios y roles</summary>
-            <div><code>logistica@acrodocs.local</code> / <code>logistica123</code> · Logística</div>
-            <div><code>area@acrodocs.local</code> / <code>area123</code> · Área usuaria</div>
-            <div><code>legal@acrodocs.local</code> / <code>legal123</code> · Asesoría legal</div>
-            <div><code>lectura@acrodocs.local</code> / <code>lectura123</code> · Solo lectura</div>
-          </details>
+          <div className="login-ayuda">Toca un usuario para completar el formulario.</div>
+          <div className="login-lista">
+            {USUARIOS_DEMO.map((u) => (
+              <button
+                type="button"
+                key={u.id}
+                className={`login-usuario${email === u.email ? " activo" : ""}`}
+                onClick={() => usar(u)}
+              >
+                <span className="login-usuario-rol">{nombreRol(u.rol)}</span>
+                <span><code>{u.email}</code> / <code>{u.password}</code></span>
+              </button>
+            ))}
+          </div>
           <div className="login-nota">
             {hasSupabase
               ? "Supabase configurado. El demo usa la sesión local hasta conectar la base."

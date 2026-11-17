@@ -1,7 +1,8 @@
 import React, { useMemo, useState } from "react";
-import { useParams, Link, useSearchParams } from "react-router-dom";
+import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
-  getTramite, updateTramite, listItems, updateItem, addItem, removeItem,
+  getTramite, updateTramite, deleteTramite, listItems, updateItem, addItem, removeItem,
+  agregarDocumento, reemplazarDocumento, eliminarDocumento, puede,
   addTareaEventual, listarEventuales, listarHitosOpcionales, addHitoOpcional,
   agregarMesSCTR, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
   actualizarCatalogoPorClave, agregarCatalogoHito, moverItem, hoyISO,
@@ -11,6 +12,7 @@ import { TIPOS_FIANZA, catalogoDe } from "../lib/catalogo.js";
 import {
   guardarArchivo, descargarArchivo, descargarComoZip, eliminarArchivo, formatearTamano, iconoArchivo,
 } from "../lib/archivos.js";
+import HistorialLista from "../components/HistorialLista.jsx";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -24,6 +26,24 @@ const nombrePorEtiqueta = (etiqueta, nombreOriginal = "") => {
     .trim();
   return `${limpio}${extension}`;
 };
+
+const fechaHora = (iso) => {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "—";
+  return d.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+// Nombre con el que se descarga una versión anterior: el del documento más
+// "(versión N)", para que no choque con el archivo vigente en la carpeta de descargas.
+const nombreDeVersion = (doc, version, numero) => {
+  const nombre = version.nombre || doc.nombre || "documento";
+  const punto = nombre.lastIndexOf(".");
+  const base = punto > 0 ? nombre.slice(0, punto) : nombre;
+  const extension = punto > 0 ? nombre.slice(punto) : "";
+  return `${base} (versión ${numero})${extension}`;
+};
+
+const MENSAJE_SIN_PERMISO = "No tienes permiso para esta acción.";
 
 const claseEstado = (estado) =>
   estado === "Completado" ? "verde" : estado === "Observado" ? "rojo" : estado === "En revisión" ? "ambar" : "gris";
@@ -59,11 +79,21 @@ const silencioProducido = (tarea) =>
   Boolean(tarea.fecha_limite) &&
   diasEntre(hoyISO(), tarea.fecha_limite) < 0;
 
-export default function TramiteDetalle({ session }) {
+export default function TramiteDetalle() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
-  const soloLectura = session?.rol === "lectura";
+  const navigate = useNavigate();
+  // Cada botón se muestra según su permiso sobre ESTE contrato (un residente solo
+  // actúa en los suyos). Se calcula una vez por contrato: leer el almacén es caro.
+  const permiso = useMemo(
+    () => Object.fromEntries(
+      ["editar", "eliminar", "agregar", "estado", "plazos", "borrar_hito", "subir", "reemplazar", "borrar_doc", "descargar", "catalogo"]
+        .map((clave) => [clave, puede(clave, id)])
+    ),
+    [id]
+  );
   const [tramite, setTramite] = useState(getTramite(id));
+  const [errorTramite, setErrorTramite] = useState("");
   const [items, setItems] = useState(listItems(id));
   const [tab, setTab] = useState("expediente");
   const [buscar, setBuscar] = useState("");
@@ -84,6 +114,7 @@ export default function TramiteDetalle({ session }) {
   const [opcionalSel, setOpcionalSel] = useState("");
   const [modalFianzas, setModalFianzas] = useState(false);
   const [configFianzas, setConfigFianzas] = useState(getConfigFianzas(id));
+  const [errorFianzas, setErrorFianzas] = useState("");
   const [nuevoDoc, setNuevoDoc] = useState("");
   const [guardarEnPlantilla, setGuardarEnPlantilla] = useState(true);
   const [editandoCatalogo, setEditandoCatalogo] = useState(false);
@@ -262,6 +293,7 @@ export default function TramiteDetalle({ session }) {
 
   const guardarTramite = (e) => {
     e.preventDefault();
+    if (!permiso.editar) return;
     const t = updateTramite(id, form);
     setTramite(t);
     setEditando(false);
@@ -269,7 +301,7 @@ export default function TramiteDetalle({ session }) {
 
   const crearEventual = (e) => {
     e.preventDefault();
-    if (!eventualSel) return;
+    if (!permiso.agregar || !eventualSel) return;
     const nueva = addTareaEventual(id, eventualSel);
     recargar();
     setModalEventual(false);
@@ -279,10 +311,10 @@ export default function TramiteDetalle({ session }) {
 
   const agregarHito = (e) => {
     e.preventDefault();
-    if (!nuevoHito.nombre.trim()) return;
+    if (!permiso.agregar || !nuevoHito.nombre.trim()) return;
     const creado = addItem(id, nuevoHito.nombre.trim(), nuevoHito.etapa);
     let mensaje = "";
-    if (guardarHitoEnCatalogo && creado) {
+    if (guardarHitoEnCatalogo && permiso.catalogo && creado) {
       agregarCatalogoHito({
         nombre: creado.nombre,
         tipoObjeto: tramite.tipo_objeto,
@@ -307,7 +339,7 @@ export default function TramiteDetalle({ session }) {
 
   const crearOpcional = (e) => {
     e.preventDefault();
-    if (!opcionalSel) return;
+    if (!permiso.agregar || !opcionalSel) return;
     const creado = addHitoOpcional(id, opcionalSel);
     recargar();
     setModalOpcional(false);
@@ -316,7 +348,7 @@ export default function TramiteDetalle({ session }) {
   };
 
   const agregarMes = (seccionCodigo) => {
-    if (soloLectura || !seccionCodigo) return;
+    if (!permiso.agregar || !seccionCodigo) return;
     const creado = agregarMesSCTR(id);
     recargar();
     if (creado) abrirTarea(creado);
@@ -324,13 +356,24 @@ export default function TramiteDetalle({ session }) {
 
   const abrirFianzas = () => {
     setConfigFianzas(getConfigFianzas(id));
+    setErrorFianzas("");
     setModalFianzas(true);
   };
 
   const guardarFianzas = (e) => {
     e.preventDefault();
-    if (!configFianzas.tipos?.length) return;
-    guardarConfigFianzas(id, configFianzas);
+    if (!permiso.agregar || !configFianzas.tipos?.length) return;
+    try {
+      guardarConfigFianzas(id, configFianzas);
+    } catch (error) {
+      // El store exige eliminar hitos si la nueva configuración deja sin sitio a hitos con documentos.
+      setErrorFianzas(
+        error?.message === MENSAJE_SIN_PERMISO
+          ? "Esta configuración quitaría hitos que ya tienen documentos. Solo quien puede eliminar hitos puede hacerlo."
+          : error?.message || "No se pudo guardar la configuración."
+      );
+      return;
+    }
     recargar();
     setModalFianzas(false);
   };
@@ -350,7 +393,7 @@ export default function TramiteDetalle({ session }) {
   };
 
   const moverDocumento = (index, direccion) => {
-    if (!tarea || soloLectura) return;
+    if (!tarea || !permiso.catalogo) return;
     const docs = [...(tarea.docsRequeridos || [])];
     const otro = docs[index + direccion];
     if (!otro) return;
@@ -359,14 +402,14 @@ export default function TramiteDetalle({ session }) {
   };
 
   const quitarDocumento = (nombre) => {
-    if (!tarea || soloLectura) return;
+    if (!tarea || !permiso.catalogo) return;
     if (!window.confirm(`¿Quitar el documento "${nombre}" de este hito?`)) return;
     actualizarDocumentos((tarea.docsRequeridos || []).filter((d) => d !== nombre));
   };
 
-  const agregarDocumento = (e) => {
+  const agregarRequisito = (e) => {
     e.preventDefault();
-    if (!tarea || !nuevoDoc.trim()) return;
+    if (!tarea || !permiso.catalogo || !nuevoDoc.trim()) return;
     const nombre = nuevoDoc.trim();
     if ((tarea.docsRequeridos || []).includes(nombre)) {
       setNuevoDoc("");
@@ -382,7 +425,7 @@ export default function TramiteDetalle({ session }) {
   };
 
   const cambiarCumplimiento = (e) => {
-    if (!tarea) return;
+    if (!tarea || !permiso.catalogo) return;
     const cumplimiento = e.target.value;
     updateItem(tarea.id, { docCumplimiento: cumplimiento });
     if (tarea.clavePlantilla) {
@@ -395,7 +438,7 @@ export default function TramiteDetalle({ session }) {
   };
 
   const abrirEditarCatalogo = () => {
-    if (!tarea) return;
+    if (!tarea || !permiso.catalogo) return;
     const esDelCatalogo = String(tarea.clavePlantilla || "").startsWith("cat_");
     const etapas = catalogoDe(tramite.tipo_objeto).etapas;
     const etapaActual = etapas.find((e) => e.codigo === tarea.etapaCodigo);
@@ -421,7 +464,7 @@ export default function TramiteDetalle({ session }) {
 
   const guardarEdicionCatalogo = (e) => {
     e.preventDefault();
-    if (!tarea) return;
+    if (!tarea || !permiso.catalogo) return;
     const docs = catalogoForm.docs.split(/\n|,/).map((d) => d.trim()).filter(Boolean);
     const cumplimiento = catalogoForm.cumplimiento.trim();
     const nombre = catalogoForm.nombre.trim() || tarea.nombre;
@@ -505,16 +548,15 @@ export default function TramiteDetalle({ session }) {
   };
 
   const moverHito = (item, direccion) => {
-    if (soloLectura) return;
+    if (!permiso.agregar) return;
     moverItem(id, item.id, direccion);
     recargar();
   };
 
   const subirArchivo = async (event, tipoDoc) => {
-    if (soloLectura) return;
     const file = event.target.files?.[0];
     event.target.value = "";
-    if (!file || !tarea) return;
+    if (!permiso.subir || !file || !tarea) return;
     if (file.size > 30 * 1024 * 1024) {
       setErrorArchivo("El archivo supera el límite de 30 MB para el demo.");
       return;
@@ -528,13 +570,17 @@ export default function TramiteDetalle({ session }) {
         tipoDoc: tipoDoc || "Otros",
         nombre: nombrePorEtiqueta(tipoDoc || "Documento", file.name),
       });
-      const actual = listItems(id).find((i) => i.id === tarea.id);
-      const documentos = [...(actual?.documentos || []), meta];
+      try {
+        agregarDocumento(tarea.id, meta);
+      } catch (error) {
+        await eliminarArchivo(meta.archivoId).catch(() => {}); // no dejar el archivo huérfano
+        throw error;
+      }
+      // Dar el hito por cumplido es cambiar su estado: solo con el permiso `estado`.
       const cumple = Boolean(tipoDoc && tarea.docCumplimiento && tipoDoc === tarea.docCumplimiento);
-      updateItem(tarea.id, {
-        documentos,
-        ...(cumple ? { estado: "Completado", fecha: tarea.fecha || hoyISO() } : {}),
-      });
+      if (cumple && permiso.estado) {
+        updateItem(tarea.id, { estado: "Completado", fecha: tarea.fecha || hoyISO() });
+      }
       recargar();
     } catch (error) {
       setErrorArchivo(error?.message || "No se pudo guardar el archivo.");
@@ -543,19 +589,56 @@ export default function TramiteDetalle({ session }) {
     }
   };
 
-  const borrarArchivo = async (doc) => {
-    if (soloLectura) return;
-    if (!tarea) return;
-    if (!window.confirm(`¿Eliminar el archivo "${doc.nombre}"?`)) return;
+  // Sube el archivo nuevo y lo registra como versión vigente del documento; el
+  // anterior queda en `versiones` y se puede descargar.
+  const subirNuevaVersion = async (event, doc) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!permiso.reemplazar || !file || !tarea) return;
+    if (file.size > 30 * 1024 * 1024) {
+      setErrorArchivo("El archivo supera el límite de 30 MB para el demo.");
+      return;
+    }
+    setErrorArchivo("");
+    setSubiendo(`v:${doc.id}`);
     try {
-      if (doc.archivoId) await eliminarArchivo(doc.archivoId);
-    } catch { /* el archivo ya no existe */ }
-    const documentos = (tarea.documentos || []).filter((d) => d.id !== doc.id);
-    updateItem(tarea.id, { documentos });
+      const meta = await guardarArchivo(file, {
+        tramiteId: id,
+        tareaId: tarea.id,
+        tipoDoc: doc.tipoDoc || "Otros",
+        nombre: nombrePorEtiqueta(doc.tipoDoc || "Documento", file.name),
+      });
+      try {
+        reemplazarDocumento(tarea.id, doc.id, meta);
+      } catch (error) {
+        await eliminarArchivo(meta.archivoId).catch(() => {});
+        throw error;
+      }
+      recargar();
+    } catch (error) {
+      setErrorArchivo(error?.message || "No se pudo guardar la nueva versión.");
+    } finally {
+      setSubiendo("");
+    }
+  };
+
+  const borrarArchivo = (doc) => {
+    if (!permiso.borrar_doc || !tarea) return;
+    const versiones = (doc.versiones || []).length;
+    const conVersiones = versiones === 0 ? "" : versiones === 1 ? " y su versión anterior" : ` y sus ${versiones} versiones anteriores`;
+    const aviso = `¿Eliminar el archivo "${doc.nombre}"${conVersiones}? Esta acción queda registrada en el historial.`;
+    if (!window.confirm(aviso)) return;
+    try {
+      eliminarDocumento(tarea.id, doc.id);
+      setErrorArchivo("");
+    } catch (error) {
+      setErrorArchivo(error?.message || "No se pudo eliminar el archivo.");
+    }
     recargar();
   };
 
   const descargar = async (doc) => {
+    if (!permiso.descargar) return;
     try {
       await descargarArchivo(doc.archivoId, doc.nombre);
     } catch (error) {
@@ -563,8 +646,17 @@ export default function TramiteDetalle({ session }) {
     }
   };
 
+  const descargarVersion = async (doc, version, numero) => {
+    if (!permiso.descargar) return;
+    try {
+      await descargarArchivo(version.archivoId, nombreDeVersion(doc, version, numero));
+    } catch (error) {
+      setErrorArchivo(error?.message || "No se pudo descargar la versión.");
+    }
+  };
+
   const descargarTodos = async () => {
-    if (!tarea) return;
+    if (!permiso.descargar || !tarea) return;
     try {
       await descargarComoZip(
         tarea.documentos || [],
@@ -577,27 +669,90 @@ export default function TramiteDetalle({ session }) {
   };
 
   const descargarExpediente = async () => {
+    if (!permiso.descargar) return;
     const documentos = items.flatMap((i) =>
       (i.documentos || []).map((doc) => ({ ...doc, nombre: `${i.codigo}/${doc.nombre}` }))
     );
     if (!documentos.length) {
-      setErrorArchivo("Este expediente todavía no tiene archivos cargados.");
+      setErrorTramite("Este expediente todavía no tiene archivos cargados.");
       return;
     }
     try {
+      setErrorTramite("");
       await descargarComoZip(documentos, `Expediente ${tramite.codigo}.zip`);
     } catch (error) {
-      setErrorArchivo(error?.message || "No se pudo descargar el expediente.");
+      setErrorTramite(error?.message || "No se pudo descargar el expediente.");
     }
   };
 
   const eliminarTareaActual = () => {
-    if (soloLectura) return;
-    if (!tarea) return;
-    if (!window.confirm(`¿Eliminar el trámite "${tarea.nombre}" del expediente?`)) return;
-    removeItem(tarea.id);
-    setTareaId(null);
+    if (!permiso.borrar_hito || !tarea) return;
+    if (!window.confirm(`¿Eliminar el trámite "${tarea.nombre}" del expediente? Esta acción queda registrada en el historial.`)) return;
+    try {
+      removeItem(tarea.id);
+      setTareaId(null);
+    } catch (error) {
+      setErrorArchivo(error?.message || "No se pudo eliminar el hito.");
+    }
     recargar();
+  };
+
+  const eliminarContrato = () => {
+    if (!permiso.eliminar) return;
+    if (!window.confirm(`¿Eliminar el contrato "${tramite.codigo}" con todos sus hitos y archivos? Esta acción no se puede deshacer y queda registrada en el historial.`)) return;
+    try {
+      deleteTramite(id);
+      navigate("/tramites");
+    } catch (error) {
+      setErrorTramite(error?.message || "No se pudo eliminar el contrato.");
+    }
+  };
+
+  // Sin ningún permiso de edición el hito se muestra solo para consulta.
+  const sinEdicion = !["estado", "plazos", "subir", "reemplazar", "borrar_doc", "borrar_hito"].some((clave) => permiso[clave]);
+
+  // Fila de un archivo con sus acciones y, si tiene, la lista de versiones anteriores.
+  const renderArchivo = (doc, conTipo) => {
+    const versiones = doc.versiones || [];
+    return (
+      <React.Fragment key={doc.id}>
+        <div className="archivo-fila">
+          <div className="doc-ico">{iconoArchivo(doc.mime, doc.nombre)}</div>
+          <div className="archivo-datos">
+            <strong>{doc.nombre}</strong>
+            <span>{conTipo ? `${doc.tipoDoc} · ` : ""}{formatearTamano(doc.tamano)} · {fecha(doc.fecha)}{versiones.length ? ` · versión ${versiones.length + 1}` : ""}</span>
+          </div>
+          {permiso.descargar && <button type="button" className="btn mini" onClick={() => descargar(doc)}>Descargar</button>}
+          {permiso.reemplazar && (
+            <label className={`btn mini subir-archivo ${subiendo ? "deshabilitado" : ""}`} title="Sube una nueva versión; la anterior se conserva">
+              {subiendo === `v:${doc.id}` ? "Subiendo…" : "Nueva versión"}
+              <input type="file" hidden disabled={Boolean(subiendo)} onChange={(e) => subirNuevaVersion(e, doc)} />
+            </label>
+          )}
+          {permiso.borrar_doc && (
+            <button type="button" className="btn-icono peligro" title="Eliminar archivo" onClick={() => borrarArchivo(doc)}>×</button>
+          )}
+        </div>
+        {versiones.length > 0 && (
+          <details className="versiones-doc">
+            <summary>Versiones anteriores ({versiones.length})</summary>
+            {versiones.map((v, i) => ({ v, numero: i + 1 })).reverse().map(({ v, numero }) => (
+              <div className="version-fila" key={`${doc.id}-${numero}`}>
+                <div className="doc-ico">{iconoArchivo("", v.nombre)}</div>
+                <div className="version-datos">
+                  <strong>Versión {numero}</strong> · {formatearTamano(v.tamano)} · {fecha(v.fecha)}
+                  <br />
+                  Reemplazada el {fechaHora(v.reemplazadoEl)} por {v.reemplazadoPor || "—"}
+                </div>
+                {permiso.descargar && (
+                  <button type="button" className="btn mini" onClick={() => descargarVersion(doc, v, numero)}>Descargar</button>
+                )}
+              </div>
+            ))}
+          </details>
+        )}
+      </React.Fragment>
+    );
   };
 
   return (
@@ -619,16 +774,21 @@ export default function TramiteDetalle({ session }) {
           </div>
         </div>
         <div className="encabezado-acciones">
-          {!soloLectura && (
+          {permiso.editar && (
             <button className="btn" onClick={() => { setForm(tramite); setEditando(true); }}>Editar datos</button>
           )}
-          <button className="btn" onClick={descargarExpediente}>Descargar expediente</button>
+          {permiso.descargar && <button className="btn" onClick={descargarExpediente}>Descargar expediente</button>}
           <button className="btn" onClick={() => window.print()}>Imprimir</button>
-          {!soloLectura && (
+          {permiso.agregar && (
             <button className="btn primario" onClick={() => { setEventualSel(""); setModalEventual(true); }}>+ Nuevo trámite</button>
+          )}
+          {permiso.eliminar && (
+            <button className="btn peligro" onClick={eliminarContrato}>Eliminar contrato</button>
           )}
         </div>
       </div>
+
+      {errorTramite && <div className="alerta" role="alert">{errorTramite}</div>}
 
       <div className="ficha">
         <div><b>Entidad</b><span>{tramite.entidad || "—"}</span></div>
@@ -653,7 +813,20 @@ export default function TramiteDetalle({ session }) {
           Expediente <span className="tab-num">{items.length}</span>
         </button>
         <button className={tab === "resumen" ? "activo" : ""} onClick={() => setTab("resumen")}>Resumen</button>
+        <button className={tab === "historial" ? "activo" : ""} onClick={() => setTab("historial")}>Historial</button>
       </div>
+
+      {tab === "historial" && (
+        <div className="tarjeta">
+          <div className="tarjeta-cab">
+            <h3>Historial del contrato</h3>
+            <span className="ref">Eliminaciones, reemplazos de documentos y otros cambios registrados</span>
+          </div>
+          <div className="cuerpo">
+            <HistorialLista tramiteId={id} vacio="Este contrato todavía no tiene cambios registrados." />
+          </div>
+        </div>
+      )}
 
       {tab === "resumen" && (
         <div className="grid-2">
@@ -677,7 +850,7 @@ export default function TramiteDetalle({ session }) {
           </div>
 
           <div className="tarjeta">
-            <div className="tarjeta-cab"><h3>Trámites eventuales</h3>{!soloLectura && <button className="btn mini" onClick={() => setModalEventual(true)}>+ Nuevo</button>}</div>
+            <div className="tarjeta-cab"><h3>Trámites eventuales</h3>{permiso.agregar && <button className="btn mini" onClick={() => setModalEventual(true)}>+ Nuevo</button>}</div>
             <div className="cuerpo">
               {eventuales.length === 0 && <div className="vacio">Sin trámites eventuales. Se crean solo cuando ocurre el hecho (cambio de personal, ampliación, adicional, etc.).</div>}
               {eventuales.map((t) => (
@@ -763,8 +936,8 @@ export default function TramiteDetalle({ session }) {
                 <option value="Completos">Requisitos completos</option>
               </select>
               <span className="contador">{itemsFiltrados.length} de {items.length}</span>
-              {!soloLectura && <button className="btn mini" onClick={() => setModalOpcional(true)}>+ Hito opcional</button>}
-              {!soloLectura && <button className="btn mini" onClick={() => setModalHito(true)}>+ Hito propio</button>}
+              {permiso.agregar && <button className="btn mini" onClick={() => setModalOpcional(true)}>+ Hito opcional</button>}
+              {permiso.agregar && <button className="btn mini" onClick={() => setModalHito(true)}>+ Hito propio</button>}
             </div>
           </div>
 
@@ -797,13 +970,13 @@ export default function TramiteDetalle({ session }) {
                       <strong>{seccion.nombre}</strong>
                       <span className="ref">{seccion.tareas.length} hito(s)</span>
                       <span className="pie-espacio" />
-                      {!soloLectura && seccion.codigo === "1.2.10" && (
+                      {permiso.agregar && seccion.codigo === "1.2.10" && (
                         <button className="btn mini" onClick={abrirFianzas}>Configurar fianzas</button>
                       )}
-                      {!soloLectura && seccion.codigo === "2.2.7" && (
+                      {permiso.agregar && seccion.codigo === "2.2.7" && (
                         <button className="btn mini" onClick={abrirFianzas}>Configurar fianzas</button>
                       )}
-                      {!soloLectura && (seccion.codigo === "1.2.11" || seccion.codigo === "2.2.8") && (
+                      {permiso.agregar && (seccion.codigo === "1.2.11" || seccion.codigo === "2.2.8") && (
                         <button className="btn mini" onClick={() => agregarMes(seccion.codigo)}>+ Agregar mes</button>
                       )}
                     </div>
@@ -849,10 +1022,10 @@ export default function TramiteDetalle({ session }) {
                               </div>
                             </div>
                             <div className="tarea-lado">
-                              {!soloLectura && (
+                              {permiso.agregar && (
                                 <span className="orden-hito" onClick={(e) => { e.stopPropagation(); moverHito(t, -1); }} title="Subir posición">↑</span>
                               )}
-                              {!soloLectura && (
+                              {permiso.agregar && (
                                 <span className="orden-hito" onClick={(e) => { e.stopPropagation(); moverHito(t, 1); }} title="Bajar posición">↓</span>
                               )}
                               <span className={`badge ${claseEstado(t.estado)}`}>{t.estado}</span>
@@ -905,8 +1078,10 @@ export default function TramiteDetalle({ session }) {
 
             <div className="modal-cuerpo modal-tarea-cuerpo">
               {tarea.nota && <div className="nota-info">{tarea.nota}</div>}
-              {soloLectura && (
-                <div className="nota-info">Modo solo lectura: puedes consultar los hitos y descargar archivos, pero no modificar el expediente.</div>
+              {sinEdicion && (
+                <div className="nota-info">
+                  Tu rol solo permite consultar los hitos{permiso.descargar ? " y descargar archivos" : ""}; no puedes modificar el expediente.
+                </div>
               )}
               {errorArchivo && <div className="alerta">{errorArchivo}</div>}
 
@@ -948,7 +1123,7 @@ export default function TramiteDetalle({ session }) {
                           : "Catálogo base"}
                     </span>
                   </div>
-                  {!soloLectura && (
+                  {permiso.catalogo && (
                     <button type="button" className="btn mini" onClick={abrirEditarCatalogo}>
                       {String(tarea.clavePlantilla || "").startsWith("cat_") ? "Editar catálogo" : "Convertir en catálogo"}
                     </button>
@@ -965,25 +1140,25 @@ export default function TramiteDetalle({ session }) {
               <div className="grid-form">
                 <label className="campo-grupo">
                   <span className="campo">Estado del hito</span>
-                  <select disabled={soloLectura} value={tarea.estado || "Pendiente"} onChange={(e) => cambiarItem({ estado: e.target.value })}>
+                  <select disabled={!permiso.estado} value={tarea.estado || "Pendiente"} onChange={(e) => cambiarItem({ estado: e.target.value })}>
                     {ESTADOS.map((e) => <option key={e}>{e}</option>)}
                   </select>
                 </label>
                 <label className="campo-grupo">
                   <span className="campo">Responsable</span>
-                  <input disabled={soloLectura} value={tarea.responsable || ""} onChange={(e) => cambiarItem({ responsable: e.target.value })} placeholder="Área o persona responsable" />
+                  <input disabled={!permiso.estado} value={tarea.responsable || ""} onChange={(e) => cambiarItem({ responsable: e.target.value })} placeholder="Área o persona responsable" />
                 </label>
                 <label className="campo-grupo">
                   <span className="campo">Fecha de presentación</span>
-                  <input disabled={soloLectura} type="date" value={tarea.fecha || ""} onChange={(e) => cambiarItem({ fecha: e.target.value })} />
+                  <input disabled={!permiso.estado} type="date" value={tarea.fecha || ""} onChange={(e) => cambiarItem({ fecha: e.target.value })} />
                 </label>
                 <label className="campo-grupo">
                   <span className="campo">Fecha límite</span>
-                  <input disabled={soloLectura} type="date" value={tarea.fecha_limite || ""} onChange={(e) => cambiarItem({ fecha_limite: e.target.value })} />
+                  <input disabled={!permiso.plazos} type="date" value={tarea.fecha_limite || ""} onChange={(e) => cambiarItem({ fecha_limite: e.target.value })} />
                 </label>
                 <label className="campo-grupo ancho-completo">
                   <span className="campo">Observación / sustento</span>
-                  <textarea disabled={soloLectura} rows="2" value={tarea.observacion || ""} onChange={(e) => cambiarItem({ observacion: e.target.value })} placeholder="Anotaciones, número de expediente, cargo de recepción…" />
+                  <textarea disabled={!permiso.estado} rows="2" value={tarea.observacion || ""} onChange={(e) => cambiarItem({ observacion: e.target.value })} placeholder="Anotaciones, número de expediente, cargo de recepción…" />
                 </label>
               </div>
 
@@ -996,7 +1171,7 @@ export default function TramiteDetalle({ session }) {
                   <span className="badge azul">{(tarea.docsRequeridos || []).length - faltantes(tarea).length}/{(tarea.docsRequeridos || []).length} completos</span>
                 </div>
 
-                {!soloLectura && (
+                {permiso.catalogo && (
                   <label className="campo-grupo cumplimiento-campo">
                     <span className="campo">Documento que da por cumplido el hito</span>
                     <select value={tarea.docCumplimiento || ""} onChange={cambiarCumplimiento}>
@@ -1021,7 +1196,7 @@ export default function TramiteDetalle({ session }) {
                         </div>
                         <div className="requisito-acciones">
                           <span className={`badge ${docs.length ? "verde" : "ambar"}`}>{docs.length ? "Cargado" : "Pendiente"}</span>
-                          {!soloLectura && (
+                          {permiso.catalogo && (
                             <>
                               <button type="button" className="btn-icono" title="Subir documento en la lista" onClick={() => moverDocumento(idx, -1)}>↑</button>
                               <button type="button" className="btn-icono" title="Bajar documento en la lista" onClick={() => moverDocumento(idx, 1)}>↓</button>
@@ -1030,20 +1205,8 @@ export default function TramiteDetalle({ session }) {
                           )}
                         </div>
                       </div>
-                      {docs.map((doc) => (
-                        <div className="archivo-fila" key={doc.id}>
-                          <div className="doc-ico">{iconoArchivo(doc.mime, doc.nombre)}</div>
-                          <div className="archivo-datos">
-                            <strong>{doc.nombre}</strong>
-                            <span>{formatearTamano(doc.tamano)} · {fecha(doc.fecha)}</span>
-                          </div>
-                          <button type="button" className="btn mini" onClick={() => descargar(doc)}>Descargar</button>
-                          {!soloLectura && (
-                            <button type="button" className="btn-icono peligro" title="Eliminar archivo" onClick={() => borrarArchivo(doc)}>×</button>
-                          )}
-                        </div>
-                      ))}
-                      {!soloLectura && (
+                      {docs.map((doc) => renderArchivo(doc, false))}
+                      {permiso.subir && (
                         <label className={`btn mini subir-archivo ${subiendo ? "deshabilitado" : ""}`}>
                           {subiendo === req ? "Subiendo…" : docs.length ? "+ Agregar otro archivo" : "Subir archivo"}
                           <input
@@ -1058,8 +1221,8 @@ export default function TramiteDetalle({ session }) {
                   );
                 })}
 
-                {!soloLectura && (
-                  <form className="agregar-documento" onSubmit={agregarDocumento}>
+                {permiso.catalogo && (
+                  <form className="agregar-documento" onSubmit={agregarRequisito}>
                     <input
                       value={nuevoDoc}
                       onChange={(e) => setNuevoDoc(e.target.value)}
@@ -1085,18 +1248,8 @@ export default function TramiteDetalle({ session }) {
                     <span className="ref">Documentos adicionales que no están en la lista de requisitos.</span>
                   </div>
                 </div>
-                {(tarea.documentos || []).filter((d) => !(tarea.docsRequeridos || []).includes(d.tipoDoc)).map((doc) => (
-                  <div className="archivo-fila" key={doc.id}>
-                    <div className="doc-ico">{iconoArchivo(doc.mime, doc.nombre)}</div>
-                    <div className="archivo-datos">
-                      <strong>{doc.nombre}</strong>
-                      <span>{doc.tipoDoc} · {formatearTamano(doc.tamano)} · {fecha(doc.fecha)}</span>
-                    </div>
-                    <button type="button" className="btn mini" onClick={() => descargar(doc)}>Descargar</button>
-                    <button type="button" className="btn-icono peligro" title="Eliminar archivo" onClick={() => borrarArchivo(doc)}>×</button>
-                  </div>
-                ))}
-                {!soloLectura && (
+                {(tarea.documentos || []).filter((d) => !(tarea.docsRequeridos || []).includes(d.tipoDoc)).map((doc) => renderArchivo(doc, true))}
+                {permiso.subir && (
                   <label className={`btn mini subir-archivo ${subiendo ? "deshabilitado" : ""}`}>
                     {subiendo === "Otros" ? "Subiendo…" : "+ Subir otro documento"}
                     <input
@@ -1111,20 +1264,22 @@ export default function TramiteDetalle({ session }) {
             </div>
 
             <div className="modal-pie">
-              {!soloLectura && (
+              {permiso.borrar_hito && (
                 <button type="button" className="btn peligro" onClick={eliminarTareaActual}>Quitar hito del expediente</button>
               )}
               <span className="pie-espacio" />
-              <button
-                type="button"
-                className="btn"
-                onClick={descargarTodos}
-                disabled={!(tarea.documentos || []).length}
-              >
-                Descargar todos
-              </button>
+              {permiso.descargar && (
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={descargarTodos}
+                  disabled={!(tarea.documentos || []).length}
+                >
+                  Descargar todos
+                </button>
+              )}
               <button type="button" className="btn" onClick={() => setTareaId(null)}>Cerrar</button>
-              {!soloLectura && tarea.estado === "Completado" ? (
+              {permiso.estado && tarea.estado === "Completado" ? (
                 <button
                   type="button"
                   className="btn"
@@ -1132,7 +1287,7 @@ export default function TramiteDetalle({ session }) {
                 >
                   Desmarcar hito
                 </button>
-              ) : !soloLectura ? (
+              ) : permiso.estado ? (
                 <button
                   type="button"
                   className="btn primario"
@@ -1202,17 +1357,23 @@ export default function TramiteDetalle({ session }) {
                   <option value="Hitos propios">Hitos propios</option>
                 </select>
               </label>
-              <label className="opcion-plantilla">
-                <input
-                  type="checkbox"
-                  checked={guardarHitoEnCatalogo}
-                  onChange={(e) => setGuardarHitoEnCatalogo(e.target.checked)}
-                />
-                Guardar también en el catálogo para futuras obras
-              </label>
-              <div className="nota-info">
-                Sin la casilla marcada, el hito queda solo en este contrato. Con la casilla marcada, se agrega al catálogo y se generará automáticamente en los contratos nuevos de {tramite.tipo_objeto}.
-              </div>
+              {permiso.catalogo ? (
+                <>
+                  <label className="opcion-plantilla">
+                    <input
+                      type="checkbox"
+                      checked={guardarHitoEnCatalogo}
+                      onChange={(e) => setGuardarHitoEnCatalogo(e.target.checked)}
+                    />
+                    Guardar también en el catálogo para futuras obras
+                  </label>
+                  <div className="nota-info">
+                    Sin la casilla marcada, el hito queda solo en este contrato. Con la casilla marcada, se agrega al catálogo y se generará automáticamente en los contratos nuevos de {tramite.tipo_objeto}.
+                  </div>
+                </>
+              ) : (
+                <div className="nota-info">El hito queda solo en este contrato.</div>
+              )}
             </div>
             <div className="modal-pie">
               <button type="button" className="btn" onClick={() => setModalHito(false)}>Cancelar</button>
@@ -1352,6 +1513,7 @@ export default function TramiteDetalle({ session }) {
               <button type="button" className="cerrar" onClick={() => setModalFianzas(false)}>×</button>
             </div>
             <div className="modal-cuerpo">
+              {errorFianzas && <div className="alerta" role="alert">{errorFianzas}</div>}
               <label className="campo-grupo">
                 <span className="campo">Periodo de renovación</span>
                 <select
@@ -1384,7 +1546,7 @@ export default function TramiteDetalle({ session }) {
                   ))}
                 </div>
               </div>
-              <div className="nota-info">Se regenerarán los hitos de renovación. Los documentos ya cargados se conservan en el mismo orden.</div>
+              <div className="nota-info">Se regenerarán los hitos de renovación. Los documentos ya cargados se conservan en el mismo orden. Si quedan menos hitos que documentos, los hitos sobrantes se eliminan con sus archivos (requiere poder eliminar hitos y queda en el historial).</div>
             </div>
             <div className="modal-pie">
               <button type="button" className="btn" onClick={() => setModalFianzas(false)}>Cancelar</button>
