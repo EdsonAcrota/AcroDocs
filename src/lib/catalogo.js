@@ -575,7 +575,7 @@ const eventualSemilla = (e) => completarPlantilla({
   plazoBase: "manual",
   plazoHabiles: e.habiles !== false,
   norma: e.norma || "",
-  nota: "Trámite eventual agregado al expediente. No se crea automáticamente.",
+  nota: "Hito eventual agregado al expediente. No se crea automáticamente.",
   silencioPositivo: Boolean(e.silencioPositivo),
   diasSilencio: e.dias || 0,
   pasos: pasosSemillaDe(e.clave),
@@ -662,10 +662,10 @@ export const ubicarPorId = (catalogo, id) => {
 // del expediente o plantillasDocs antiguas). En una sección recurrente el nombre
 // y el plazo del periodo no son de la plantilla, igual que antes.
 const CAMPOS_POR_TIPO = {
-  hito: ["docs", "cumplimiento", "nombre", "plazoDias", "plazoBase", "plazoHabiles", "norma", "nota"],
-  recurrente: ["docs", "cumplimiento", "norma"],
-  eventual: ["docs", "cumplimiento"],
-  opcional: ["docs", "cumplimiento"],
+  hito: ["docs", "cumplimiento", "nombre", "plazoDias", "plazoBase", "plazoHabiles", "norma", "nota", "pasos", "plazoLevantamiento"],
+  recurrente: ["docs", "cumplimiento", "norma", "pasos", "plazoLevantamiento"],
+  eventual: ["docs", "cumplimiento", "norma", "nota", "pasos", "plazoLevantamiento"],
+  opcional: ["docs", "cumplimiento", "norma", "nota", "plazoDias", "plazoBase", "plazoHabiles", "pasos", "plazoLevantamiento"],
 };
 
 export const limpiarDocs = (docs) => [...new Set((docs || []).map((d) => String(d).trim()).filter(Boolean))];
@@ -681,6 +681,11 @@ export const aplicarCambiosPlantilla = (ubicacion, cambios = {}) => {
     if (campo === "docs") {
       if (!Array.isArray(valor)) continue;
       valor = limpiarDocs(valor);
+    } else if (campo === "pasos") {
+      if (!Array.isArray(valor)) continue;
+      valor = normalizarPasos(valor);
+      // Los pasos guardados antes de normalizarse no cuentan como cambio si dicen lo mismo.
+      if (JSON.stringify(normalizarPasos(p.pasos || [])) === JSON.stringify(valor)) continue;
     } else if (campo === "plazoDias") valor = Number(valor) || 0;
     else if (campo === "plazoHabiles") valor = valor !== false;
     if (JSON.stringify(p[campo]) !== JSON.stringify(valor)) {
@@ -1025,6 +1030,54 @@ export const PERIODOS_A_MANO = {
   "2.3.3": "+ Agregar informe",
 };
 
+// Las clases de hito que ve el usuario. En los datos, el hito del expediente trae `tipo`
+// (fijo, recurrente, eventual, opcional o propio); un hito propio que se convirtió en
+// catálogo pasa a la clase de su plantilla.
+export const CLASES_HITO = {
+  catalogo: {
+    etiqueta: "Hito de catálogo",
+    plural: "Hitos de catálogo",
+    color: "azul",
+    definicion: "Se crea solo en cada contrato nuevo, según el catálogo.",
+  },
+  recurrente: {
+    etiqueta: "Hito recurrente",
+    plural: "Hitos recurrentes",
+    color: "azul",
+    definicion: "Se repite cada cierto tiempo: valorizaciones, informes mensuales, SCTR y renovaciones de carta fianza.",
+  },
+  eventual: {
+    etiqueta: "Hito eventual",
+    plural: "Hitos eventuales",
+    color: "violeta",
+    definicion: "Se agrega al contrato cuando ocurre el hecho: ampliación de plazo, adicional, cambio de personal…",
+  },
+  opcional: {
+    etiqueta: "Hito opcional",
+    plural: "Hitos opcionales",
+    color: "gris",
+    definicion: "Se agrega al contrato cuando se necesita, por ejemplo el registro del contrato en el SEACE.",
+  },
+  propio: {
+    etiqueta: "Hito propio",
+    plural: "Hitos propios",
+    color: "gris",
+    definicion: "Es solo de un contrato: lo creas ahí y no está en el catálogo.",
+  },
+};
+
+export const claseDeHito = (item) => {
+  const ruta = String(item?.clavePlantilla || "");
+  if (item?.tipo === "propio") {
+    if (ruta.startsWith("eventual:")) return "eventual";
+    if (ruta.startsWith("opcional:")) return "opcional";
+    if (item.origen === "catalogo" || ruta.startsWith("cat_")) return "catalogo";
+    return "propio";
+  }
+  if (item?.tipo === "fijo") return "catalogo";
+  return CLASES_HITO[item?.tipo] ? item.tipo : "catalogo";
+};
+
 export const TIPOS_FIANZA = [
   { clave: "fiel_cumplimiento", etiqueta: "Fiel cumplimiento" },
   { clave: "adelanto_directo", etiqueta: "Adelanto directo" },
@@ -1105,7 +1158,7 @@ export const crearTareaEventual = (tramite, clave, existentes = [], catalogo, fe
     plazoBase: "manual",
     plazoHabiles: habiles,
     norma: modelo.norma || "",
-    nota: modelo.nota || "Trámite eventual agregado al expediente. No se crea automáticamente.",
+    nota: modelo.nota || "Hito eventual agregado al expediente. No se crea automáticamente.",
     pasos: modelo.pasos || [],
     plazoLevantamiento: modelo.plazoLevantamiento || null,
   }, {

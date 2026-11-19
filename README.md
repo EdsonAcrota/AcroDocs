@@ -75,10 +75,13 @@ Para consultoría se usa la serie `2.x` y el trámite eventual se numera en `2.5
 
 ### Tipos de hito
 
-- **Hito de catálogo (fijo o recurrente):** se crea automáticamente al registrar el contrato. Los recurrentes generan una fila por mes o por año (SCTR, valorizaciones, informes, renovación de carta fianza).
-- **Hito opcional:** no se genera por defecto; se agrega con **“+ Hito opcional”**.
+- **Hito de catálogo:** se crea solo en cada contrato nuevo, según el catálogo.
+- **Hito recurrente:** se repite cada cierto tiempo: valorizaciones, informes mensuales, SCTR y renovaciones de carta fianza. Nace con el primer periodo (las renovaciones de carta fianza se configuran en el contrato) y los siguientes se agregan con **“+ Agregar valorización”**, **“+ Agregar informe”** o **“+ Agregar mes”**.
 - **Hito eventual:** se agrega con **“+ Hito eventual”** cuando ocurre el hecho: cambio de personal clave, ampliación de plazo, adicional o deductivo, mayores metrados, consulta sobre incidencias, suspensión, intensificación del programa, paralización o sustitución del supervisor.
-- **Hito propio:** hito manual para casos no previstos.
+- **Hito opcional:** no se genera por defecto; se agrega con **“+ Hito opcional”** cuando se necesita, por ejemplo el registro del contrato en el SEACE.
+- **Hito propio:** es solo de un contrato; se crea con **“+ Hito propio”** y no está en el catálogo. Con **“Convertir en catálogo”** se puede pasar al catálogo como hito de catálogo, eventual u opcional.
+
+En el expediente, el filtro **Tipos de hito** muestra solo una clase. Si mejoras el detalle de un hito en un contrato, **“Actualizar catálogo con este hito”** lo copia a su plantilla para los contratos nuevos.
 
 Cada hito tiene estado, responsable, fecha de presentación y límite, plazo, norma, documentos requeridos y archivos cargados. Para contratos de **Servicio** o **Bien**, mientras no haya catálogos propios, el sistema usa el catálogo de Obra como base.
 

@@ -14,6 +14,8 @@ import {
   ubicarPlantillas,
   ubicarPorId,
   aplicarCambiosPlantilla,
+  claveUnica,
+  limpiarDocs,
   plantillaDesdeHitoPersonal,
   seccionPara,
   asignarCodigos,
@@ -420,6 +422,7 @@ export const crearUsuario = (datos = {}) => {
     password: String(datos.password),
     rol: datos.rol,
     contratos: contratosExistentes(data, datos.contratos),
+    soloAsignados: Boolean(datos.soloAsignados),
     activo: true,
   };
   data.usuarios.push(usuario);
@@ -433,7 +436,7 @@ export const crearUsuario = (datos = {}) => {
   return usuarioPublico(usuario);
 };
 
-// `cambios` admite nombre, email, password, rol, contratos y activo. Un campo
+// `cambios` admite nombre, email, password, rol, contratos, soloAsignados y activo. Un campo
 // ausente no se toca; una contraseña presente no puede venir vacía.
 export const actualizarUsuario = (id, cambios = {}) => {
   const data = read();
@@ -477,6 +480,12 @@ export const actualizarUsuario = (id, cambios = {}) => {
     siguiente.contratos = contratosExistentes(data, cambios.contratos);
     if (!mismosElementos(siguiente.contratos, usuario.contratos || [])) {
       notas.push(`contratos asignados: ${siguiente.contratos.length}`);
+    }
+  }
+  if (trae("soloAsignados")) {
+    siguiente.soloAsignados = Boolean(cambios.soloAsignados);
+    if (siguiente.soloAsignados !== Boolean(usuario.soloAsignados)) {
+      notas.push(siguiente.soloAsignados ? "solo ve los contratos asignados" : "ve los contratos según su rol");
     }
   }
   if (trae("activo")) {
@@ -957,6 +966,8 @@ const ETIQUETAS_CAMPO = {
   nota: "nota",
   activo: "activo",
   ubicacion: "etapa",
+  pasos: "pasos",
+  plazoLevantamiento: "plazo para levantar observaciones",
 };
 
 const describirCampos = (campos) => [...new Set(campos)].map((c) => ETIQUETAS_CAMPO[c] || c).join(", ");
@@ -1143,6 +1154,133 @@ export const guardarPlantilla = (clave, plantilla) => {
     write(data);
   }
   return clonar(principal);
+};
+
+// ---------- Del hito del contrato al catálogo ----------
+const CAMPOS_DE_PASO = ["clave", "nombre", "responsable", "tipoRegistro", "plazoDias", "habiles", "desde", "alertas", "alVencer", "verificado"];
+
+// Plantilla del catálogo, en el tipo de contrato del hito, a la que pertenece un
+// hito del expediente; null si todavía no está en el catálogo.
+const ubicarPlantillaDeItem = (catalogo, tramite, item) => {
+  const ruta = item.tipo === "eventual" ? `eventual:${item.clave}` : item.tipo === "opcional" ? item.plantilla : item.clavePlantilla;
+  return ubicarPlantillas(catalogo, ruta).find((u) => u.ambito === ambitoDe(tramite?.tipo_objeto)) || null;
+};
+
+// Lo que el hito del contrato dice hoy, con los nombres de la plantilla. Cada tipo de
+// plantilla toma solo los campos que acepta (aplicarCambiosPlantilla). Los pasos van
+// sin los datos propios del contrato (como la fecha límite fija del primero).
+const valoresDeHito = (item) => ({
+  docs: item.docsRequeridos || [],
+  cumplimiento: item.docCumplimiento || "",
+  nombre: item.nombre,
+  plazoDias: item.plazoDias,
+  plazoBase: item.plazoBase,
+  plazoHabiles: item.plazoHabiles,
+  norma: item.norma || "",
+  nota: item.nota || "",
+  pasos: (item.pasos || []).map((p) => Object.fromEntries(CAMPOS_DE_PASO.filter((k) => p[k] !== undefined).map((k) => [k, p[k]]))),
+  plazoLevantamiento: item.plazoLevantamiento || null,
+});
+
+// Texto de los campos del catálogo ("documentos requeridos, nota…") para mostrarlos.
+export const describirCamposCatalogo = (campos) => describirCampos(campos);
+
+// Dónde está el hito del contrato en el catálogo: el tipo de su plantilla ("hito",
+// "recurrente", "eventual" u "opcional") y los campos en que el catálogo difiere hoy del
+// hito. No escribe nada. Devuelve null si el hito todavía no está en el catálogo.
+export const estadoCatalogoDeHito = (itemId) => {
+  const data = read();
+  const item = itemEn(data, itemId);
+  if (!veContrato(data.permisosRoles, usuarioActual(data), item.tramite_id)) return null;
+  const tramite = data.tramites.find((t) => t.id === item.tramite_id);
+  const ubicada = ubicarPlantillaDeItem(clonar(data.catalogo), tramite, item);
+  if (!ubicada) return null;
+  return { tipo: ubicada.tipo, clave: ubicada.plantilla.clave, campos: [...new Set(aplicarCambiosPlantilla(ubicada, valoresDeHito(item)))] };
+};
+
+// Qué cambiaría en el catálogo si se actualizara con este hito (lista de campos).
+// Devuelve null si el hito todavía no está en el catálogo.
+export const diferenciasConCatalogo = (itemId) => estadoCatalogoDeHito(itemId)?.campos ?? null;
+
+// Copia el detalle actual del hito del contrato a su plantilla del catálogo. Solo lo
+// usan los contratos que se creen después. Devuelve los campos que cambiaron.
+export const actualizarCatalogoDesdeHito = (itemId) => {
+  const data = read();
+  const item = itemEn(data, itemId);
+  exigirEn(data, "catalogo");
+  const tramite = data.tramites.find((t) => t.id === item.tramite_id);
+  const ubicada = ubicarPlantillaDeItem(data.catalogo, tramite, item);
+  if (!ubicada) throw new Error("Este hito todavía no está en el catálogo: conviértelo primero.");
+  const campos = [...new Set(aplicarCambiosPlantilla(ubicada, valoresDeHito(item)))];
+  if (campos.length > 0) {
+    anotarCatalogo(data, "editar", ubicada.plantilla.id, `Plantilla «${ubicada.plantilla.nombre}» actualizada desde ${item.codigo} de ${tramite.codigo}: cambió ${describirCampos(campos)}.`);
+    write(data);
+  }
+  return campos;
+};
+
+// Agrega al catálogo un hito del contrato que aún no está en él, como hito eventual
+// (`grupo` "eventual": se agrega cuando ocurre el hecho) o como hito opcional
+// ("opcional": se agrega cuando se necesita), y lo vincula a esa plantilla. Los hitos
+// que se generan en cada contrato nuevo se agregan con agregarCatalogoHito.
+export const convertirEnCatalogoLista = (itemId, grupo, datos = {}) => {
+  const data = read();
+  const item = itemEn(data, itemId);
+  exigirEn(data, "catalogo");
+  if (grupo !== "eventual" && grupo !== "opcional") throw new Error("Elige si se agrega como hito eventual o como hito opcional.");
+  const nombre = String(datos.nombre ?? item.nombre).trim();
+  if (!nombre) throw new Error("Escribe el nombre.");
+  const tramite = data.tramites.find((t) => t.id === item.tramite_id);
+  const ambito = ambitoDe(tramite?.tipo_objeto);
+  const lista = data.catalogo[grupo === "eventual" ? "eventuales" : "opcionales"][ambito];
+  const docs = limpiarDocs(datos.docs ?? item.docsRequeridos);
+  const dias = Math.max(0, Number(datos.dias ?? item.plazoDias) || 0);
+  const primera = data.catalogo[ambito].etapas[0];
+  const comun = {
+    id: uid(),
+    clave: claveUnica(nombre, lista.map((p) => p.clave)),
+    nombre,
+    docs,
+    cumplimiento: docs.includes(datos.cumplimiento) ? datos.cumplimiento : "",
+    plazoDias: dias,
+    plazoHabiles: datos.habiles !== false,
+    norma: String(datos.norma ?? item.norma ?? ""),
+    pasos: valoresDeHito(item).pasos,
+    plazoLevantamiento: item.plazoLevantamiento || null,
+  };
+  const plantilla = completarPlantilla(grupo === "eventual"
+    ? {
+      ...comun,
+      plazoBase: "manual",
+      nota: String(datos.nota ?? "Hito eventual agregado al expediente. No se crea automáticamente."),
+      silencioPositivo: Boolean(datos.silencioPositivo),
+      diasSilencio: datos.silencioPositivo ? dias : 0,
+    }
+    : {
+      ...comun,
+      plazoBase: datos.base || "inicio",
+      nota: String(datos.nota ?? "Hito opcional agregado al expediente."),
+      etapaCodigo: datos.etapaCodigo || primera?.codigo || "",
+      etapaNombre: datos.etapaNombre || primera?.nombre || "",
+    });
+  lista.push(plantilla);
+  // El hito del contrato queda vinculado a su plantilla y con los mismos valores.
+  Object.assign(item, {
+    nombre,
+    docsRequeridos: [...plantilla.docs],
+    docCumplimiento: plantilla.cumplimiento,
+    plazoDias: plantilla.plazoDias,
+    plazoBase: plantilla.plazoBase,
+    plazoHabiles: plantilla.plazoHabiles,
+    norma: plantilla.norma,
+    nota: plantilla.nota,
+    plantilla: `${grupo}:${plantilla.clave}`,
+    clavePlantilla: `${grupo}:${plantilla.clave}`,
+    origen: "catalogo",
+  });
+  anotarCatalogo(data, "agregar", plantilla.id, `${grupo === "eventual" ? "Hito eventual" : "Hito opcional"} «${nombre}» agregado al catálogo de ${tipoDeAmbito(ambito)} desde ${item.codigo} de ${tramite.codigo}.`);
+  write(data);
+  return clonar(plantilla);
 };
 
 // Vista con la forma del catálogo personalizado anterior (Configuración la usa).
@@ -1837,8 +1975,7 @@ export const flujoDeItem = (itemId) => {
 // La plantilla del catálogo de un hito, si tiene pasos definidos.
 const plantillaConPasosEn = (data, item) => {
   const tramite = data.tramites.find((t) => t.id === item.tramite_id);
-  const ruta = item.tipo === "eventual" ? `eventual:${item.clave}` : item.tipo === "opcional" ? item.plantilla : item.clavePlantilla;
-  const ubicada = ubicarPlantillas(data.catalogo, ruta).find((u) => u.ambito === ambitoDe(tramite?.tipo_objeto));
+  const ubicada = ubicarPlantillaDeItem(data.catalogo, tramite, item);
   return ubicada && (ubicada.plantilla.pasos || []).length ? ubicada : null;
 };
 

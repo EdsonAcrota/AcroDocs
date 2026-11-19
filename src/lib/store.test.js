@@ -1384,6 +1384,80 @@ describe("regresión: generación de hitos igual que antes del catálogo almacen
   });
 });
 
+describe("catálogo desde un hito del contrato", () => {
+  const obraNueva = (codigo) => store.createTramite({
+    codigo, denominacion: `Obra ${codigo}`, tipo_objeto: "Obra",
+    fecha_inicio: "2026-03-02", fecha_fin: "2026-12-30", fecha_suscripcion: "2026-02-20",
+  });
+
+  it("actualizarCatalogoDesdeHito copia el detalle del hito a su plantilla, avisa qué cambió y lo usan los contratos nuevos", () => {
+    entrar("gerente");
+    const t = obraNueva("C-HITO-1");
+    const hito = store.listItems(t.id).find((i) => i.codigo === "1.1.2");
+    store.updateItem(hito.id, { docsRequeridos: ["Carta fianza", "Voucher"], docCumplimiento: "Carta fianza", nota: "Nota mejorada", plazoDias: 7 });
+
+    expect(store.diferenciasConCatalogo(hito.id)).toEqual(expect.arrayContaining(["docs", "cumplimiento", "nota", "plazoDias"]));
+    expect(store.getPlantilla("1.1.2").nota).not.toBe("Nota mejorada");
+
+    expect(store.actualizarCatalogoDesdeHito(hito.id)).toEqual(expect.arrayContaining(["docs", "nota", "plazoDias"]));
+    expect(store.getPlantilla("1.1.2")).toMatchObject({ docs: ["Carta fianza", "Voucher"], cumplimiento: "Carta fianza", nota: "Nota mejorada", plazoDias: 7 });
+    expect(store.actualizarCatalogoDesdeHito(hito.id)).toEqual([]);
+
+    const nueva = obraNueva("C-HITO-2");
+    expect(store.listItems(nueva.id).find((i) => i.codigo === "1.1.2")).toMatchObject({ docsRequeridos: ["Carta fianza", "Voucher"], nota: "Nota mejorada", plazoDias: 7 });
+  });
+
+  it("también lleva al catálogo los pasos del hito, sin los datos propios del contrato", () => {
+    entrar("gerente");
+    const t = obraNueva("C-HITO-3");
+    const valorizacion = store.listItems(t.id).find((i) => i.codigo === "1.3.2.1");
+    expect(valorizacion.pasos.length).toBeGreaterThan(0);
+    store.updateItem(valorizacion.id, { pasos: valorizacion.pasos.map((p, i) => (i === 0 ? { ...p, plazoDias: 9 } : p)) });
+
+    expect(store.actualizarCatalogoDesdeHito(valorizacion.id)).toContain("pasos");
+    const plantilla = store.getPlantilla("1.3.2");
+    expect(plantilla.pasos[0].plazoDias).toBe(9);
+    expect(plantilla.pasos[0]).not.toHaveProperty("fechaLimiteFija");
+  });
+
+  it("convertirEnCatalogoLista agrega un hito del contrato como trámite eventual o como hito opcional y lo vincula", () => {
+    entrar("gerente");
+    const t = obraNueva("C-HITO-4");
+    const propio = store.addItem(t.id, "Revisión de seguridad", "Hitos propios", { docsRequeridos: ["Informe de seguridad"] });
+
+    const eventual = store.convertirEnCatalogoLista(propio.id, "eventual", {
+      nombre: "Revisión de seguridad", docs: ["Informe de seguridad"], cumplimiento: "Informe de seguridad", dias: 5, habiles: true, norma: "Norma G.050",
+    });
+    expect(store.getCatalogo().eventuales.obra.map((e) => e.nombre)).toContain("Revisión de seguridad");
+    expect(store.listItems(t.id).find((i) => i.id === propio.id)).toMatchObject({ clavePlantilla: `eventual:${eventual.clave}` });
+    expect(store.diferenciasConCatalogo(propio.id)).toEqual([]);
+
+    const otro = store.addItem(t.id, "Charla de seguridad", "Hitos propios", { docsRequeridos: ["Acta de charla"] });
+    store.convertirEnCatalogoLista(otro.id, "opcional", {
+      nombre: "Charla de seguridad", docs: ["Acta de charla"], etapaCodigo: "1.2", etapaNombre: "Inicio y aseguramiento",
+    });
+    expect(store.getCatalogo().opcionales.obra.find((o) => o.nombre === "Charla de seguridad")).toMatchObject({ etapaCodigo: "1.2", docs: ["Acta de charla"] });
+
+    expect(() => store.convertirEnCatalogoLista(otro.id, "fijo", {})).toThrow();
+  });
+});
+
+describe("acceso a un solo contrato", () => {
+  it("un usuario con soloAsignados ve únicamente sus contratos aunque su rol vea todos", () => {
+    entrar("gerente");
+    store.crearUsuario({ nombre: "Asistente de obra", email: "asistente.obra@acrodocs.local", password: "clave123", rol: "asis_tec", contratos: ["t-001"], soloAsignados: true });
+    store.crearUsuario({ nombre: "Asistente libre", email: "asistente.libre@acrodocs.local", password: "clave123", rol: "asis_tec", contratos: ["t-001"] });
+
+    expect(store.loginDemo("asistente.obra@acrodocs.local", "clave123").error).toBeUndefined();
+    expect(store.listTramites().map((t) => t.id)).toEqual(["t-001"]);
+    expect(store.puede("subir", "t-001")).toBe(true);
+    expect(store.puede("subir", "t-002")).toBe(false);
+
+    expect(store.loginDemo("asistente.libre@acrodocs.local", "clave123").error).toBeUndefined();
+    expect(store.listTramites().map((t) => t.id).sort()).toEqual(["t-001", "t-002"]);
+  });
+});
+
 describe("catálogo exportado e importado", () => {
   it("prepararCatalogoImportado acepta un catálogo exportado, conserva su orden y rechaza lo que no lo es", () => {
     entrar("gerente");

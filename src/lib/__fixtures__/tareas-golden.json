@@ -608,7 +608,7 @@
       "plazoBase": "manual",
       "plazoHabiles": true,
       "norma": "Ley 32069 y su Reglamento",
-      "nota": "Trámite eventual agregado al expediente. No se crea automáticamente.",
+      "nota": "Hito eventual agregado al expediente. No se crea automáticamente.",
       "periodo": "",
       "estado": "En revisión"
     },
@@ -3874,7 +3874,7 @@
       "plazoBase": "manual",
       "plazoHabiles": true,
       "norma": "Ley 32069, art. 200 del Reglamento",
-      "nota": "Trámite eventual agregado al expediente. No se crea automáticamente.",
+      "nota": "Hito eventual agregado al expediente. No se crea automáticamente.",
       "periodo": "",
       "estado": "Pendiente"
     },
@@ -4737,7 +4737,7 @@
       "plazoBase": "manual",
       "plazoHabiles": true,
       "norma": "Ley 32069 y su Reglamento",
-      "nota": "Trámite eventual agregado al expediente. No se crea automáticamente.",
+      "nota": "Hito eventual agregado al expediente. No se crea automáticamente.",
       "periodo": "",
       "estado": "Pendiente"
     },

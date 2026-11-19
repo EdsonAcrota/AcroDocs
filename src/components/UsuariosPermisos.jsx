@@ -16,7 +16,7 @@ const GRUPOS = PERMISOS.reduce((acc, permiso) => {
 // Etiqueta corta para el encabezado vertical: sin la aclaración entre paréntesis.
 const etiquetaCorta = (nombre) => nombre.replace(/\s*\(.*\)\s*$/, "");
 
-const FORM_NUEVO = { id: null, nombre: "", email: "", password: "", rol: "consulta", contratos: [] };
+const FORM_NUEVO = { id: null, nombre: "", email: "", password: "", rol: "consulta", contratos: [], soloAsignados: false };
 
 function Mensajes({ aviso, error }) {
   return (
@@ -55,7 +55,7 @@ export default function UsuariosPermisos({ onCambio }) {
   };
 
   const abrirEdicion = (u) => {
-    setForm({ id: u.id, nombre: u.nombre, email: u.email, password: "", rol: u.rol, contratos: [...u.contratos] });
+    setForm({ id: u.id, nombre: u.nombre, email: u.email, password: "", rol: u.rol, contratos: [...u.contratos], soloAsignados: Boolean(u.soloAsignados) });
     setErrorUsuarios("");
     setAvisoUsuarios("");
   };
@@ -71,7 +71,7 @@ export default function UsuariosPermisos({ onCambio }) {
     e.preventDefault();
     try {
       if (form.id) {
-        const cambios = { nombre: form.nombre, email: form.email, rol: form.rol, contratos: form.contratos };
+        const cambios = { nombre: form.nombre, email: form.email, rol: form.rol, contratos: form.contratos, soloAsignados: form.soloAsignados };
         // En edición, dejar la contraseña vacía conserva la actual.
         if (form.password !== "") cambios.password = form.password;
         const guardado = actualizarUsuario(form.id, cambios);
@@ -170,10 +170,19 @@ export default function UsuariosPermisos({ onCambio }) {
                   {rolesDisponibles.map((r) => <option key={r.clave} value={r.clave}>{r.nombre}</option>)}
                 </select>
               </label>
+              {veTodos(form.rol) && form.rol !== "gerente" && (
+                <label className="opcion-fianza ancho-completo" style={{ marginBottom: 13 }}>
+                  <input type="checkbox" checked={form.soloAsignados} onChange={(e) => setForm({ ...form, soloAsignados: e.target.checked })} />
+                  <span>
+                    <strong>Solo ve los contratos asignados</strong>
+                    <span className="ref usuario-nota"> Aunque su rol vea todos, esta persona solo verá los contratos que marques abajo.</span>
+                  </span>
+                </label>
+              )}
               <div className="campo-grupo ancho-completo">
                 <span className="campo">Contratos asignados</span>
-                {veTodos(form.rol) && (
-                  <div className="ref usuario-nota">Este rol ve todos los contratos: la asignación solo se usa si más adelante pierde ese permiso.</div>
+                {veTodos(form.rol) && !form.soloAsignados && (
+                  <div className="ref usuario-nota">Este rol ve todos los contratos: la asignación solo se usa si marcas “Solo ve los contratos asignados” o si el rol pierde ese permiso.</div>
                 )}
                 <div className="tipos-fianza">
                   {contratos.map((c) => (
@@ -217,7 +226,7 @@ export default function UsuariosPermisos({ onCambio }) {
                       </td>
                       <td data-label="Rol"><span className={`badge ${u.rol === "gerente" ? "violeta" : "azul"}`}>{nombreRol(u.rol)}</span></td>
                       <td data-label="Contratos">
-                        {veTodos(u.rol) ? (
+                        {veTodos(u.rol) && !u.soloAsignados ? (
                           <span className="ref">Todos</span>
                         ) : u.contratos.length === 0 ? (
                           <span className="ref">Ninguno asignado</span>

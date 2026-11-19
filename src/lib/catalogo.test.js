@@ -7,6 +7,8 @@ import {
   listarHitosOpcionales,
   ordenarGrupos,
   moverHitoASeccion,
+  claseDeHito,
+  CLASES_HITO,
 } from "./catalogo.js";
 import { FERIADOS_2026 } from "./fechas.js";
 import golden from "./__fixtures__/tareas-golden.json";
@@ -231,5 +233,17 @@ describe("orden y lugar de los hitos en el catálogo", () => {
     const recurrente = seccionPorCodigo(cat.obra, "1.3.2");
     expect(moverHitoASeccion(cat, origen.hitos[0].id, recurrente.id)).toBe(false);
     expect(origen.hitos).toHaveLength(4);
+  });
+
+  it("claseDeHito reparte los hitos del expediente en sus clases y un hito propio convertido toma la de su plantilla", () => {
+    expect(claseDeHito({ tipo: "fijo" })).toBe("catalogo");
+    expect(claseDeHito({ tipo: "recurrente" })).toBe("recurrente");
+    expect(claseDeHito({ tipo: "eventual" })).toBe("eventual");
+    expect(claseDeHito({ tipo: "opcional" })).toBe("opcional");
+    expect(claseDeHito({ tipo: "propio", clavePlantilla: "" })).toBe("propio");
+    expect(claseDeHito({ tipo: "propio", clavePlantilla: "cat_abc", origen: "catalogo" })).toBe("catalogo");
+    expect(claseDeHito({ tipo: "propio", clavePlantilla: "eventual:revision" })).toBe("eventual");
+    expect(claseDeHito({ tipo: "propio", clavePlantilla: "opcional:charla" })).toBe("opcional");
+    expect(Object.keys(CLASES_HITO)).toEqual(["catalogo", "recurrente", "eventual", "opcional", "propio"]);
   });
 });

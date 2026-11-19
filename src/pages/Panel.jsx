@@ -66,7 +66,7 @@ export default function Panel() {
         <div className="tarjeta">
           <div className="tarjeta-cab">
             <h3>Alertas y vencimientos</h3>
-            {eventuales > 0 && <span className="badge violeta">{eventuales} trámite(s) eventual(es)</span>}
+            {eventuales > 0 && <span className="badge violeta">{eventuales} hito(s) eventual(es)</span>}
           </div>
           <div className="cuerpo">
             {alertas.length === 0 && <div className="vacio">No hay plazos próximos ni vencidos.</div>}

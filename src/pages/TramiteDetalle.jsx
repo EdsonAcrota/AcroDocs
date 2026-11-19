@@ -6,13 +6,14 @@ import {
   addTareaEventual, listarEventuales, listarHitosOpcionales, addHitoOpcional,
   agregarPeriodo, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
   actualizarCatalogoPorClave, agregarCatalogoHito, moverItem, hoyISO,
+  estadoCatalogoDeHito, actualizarCatalogoDesdeHito, convertirEnCatalogoLista, describirCamposCatalogo,
   listProcedimientos, getProcedimiento, crearProcedimiento, actualizarProcedimiento,
   eliminarProcedimiento, agregarMovimientoProcedimiento,
   ESTADOS_TRAMITE, PRIORIDADES_TRAMITE,
   nombreEjecutor, validarEjecutor,
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
-import { TIPOS_FIANZA, PERIODOS_A_MANO, catalogoDe, ordenarGrupos } from "../lib/catalogo.js";
+import { TIPOS_FIANZA, PERIODOS_A_MANO, CLASES_HITO, catalogoDe, ordenarGrupos, claseDeHito } from "../lib/catalogo.js";
 import {
   guardarArchivo, descargarArchivo, descargarComoZip, eliminarArchivo, formatearTamano, iconoArchivo,
 } from "../lib/archivos.js";
@@ -21,18 +22,21 @@ import EjecutorForm from "../components/EjecutorForm.jsx";
 import LineaTiempo from "../components/LineaTiempo.jsx";
 import SubirArchivo, { TomarFoto } from "../components/SubirArchivo.jsx";
 
+const ROTULO_TIPO_CATALOGO = { hito: "hito de catálogo", recurrente: "hito recurrente", eventual: "hito eventual", opcional: "hito opcional" };
+
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 const ESTADOS = ["Pendiente", "En revisión", "Completado", "Observado", "No aplica"];
 
-const etiquetaTipoHito = (tipo) => ({
-  fijo: "Hito de catálogo",
-  recurrente: "Hito de catálogo",
-  opcional: "Hito opcional",
-  eventual: "Hito eventual",
-  propio: "Hito propio",
-  tramite: "Trámite",
-}[tipo] || "Hito");
+// "Hito de catálogo", "Hito recurrente", "Hito eventual", "Hito opcional" o "Hito propio".
+const etiquetaClase = (item) => (item.tipo === "tramite" ? "Trámite" : CLASES_HITO[claseDeHito(item)].etiqueta);
+
+// Insignia de la clase del hito; en un recurrente incluye su periodo ("Hito recurrente · marzo 2026").
+const InsigniaClase = ({ item }) => {
+  const clase = claseDeHito(item);
+  const { etiqueta, color } = CLASES_HITO[clase];
+  return <span className={`badge ${color}`}>{etiqueta}{clase === "recurrente" && item.periodo ? ` · ${item.periodo}` : ""}</span>;
+};
 
 const nombrePorEtiqueta = (etiqueta, nombreOriginal = "") => {
   const extension = nombreOriginal.includes(".") ? `.${nombreOriginal.split(".").pop()}` : "";
@@ -123,6 +127,7 @@ export default function TramiteDetalle() {
   const [filtroEtapa, setFiltroEtapa] = useState("Todas");
   const [filtroEstado, setFiltroEstado] = useState("Todos");
   const [filtroDocs, setFiltroDocs] = useState("Todos");
+  const [filtroTipo, setFiltroTipo] = useState("Todos");
   const [colapsadas, setColapsadas] = useState([]);
   const [tareaId, setTareaId] = useState(searchParams.get("tarea") || null);
   const [subiendo, setSubiendo] = useState("");
@@ -150,6 +155,13 @@ export default function TramiteDetalle() {
   const tarea = useMemo(
     () => items.find((i) => i.id === tareaId) || null,
     [items, tareaId]
+  );
+
+  // Dónde está este hito en el catálogo y en qué difiere hoy (se recalcula al recargar).
+  const estadoCatalogo = useMemo(
+    () => (tarea ? estadoCatalogoDeHito(tarea.id) : null),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [tarea]
   );
 
   const tramitesVinculados = useMemo(
@@ -240,14 +252,15 @@ export default function TramiteDetalle() {
       ].join(" ").toLowerCase().includes(texto);
       const coincideEtapa = filtroEtapa === "Todas" || i.etapaCodigo === filtroEtapa;
       const coincideEstado = filtroEstado === "Todos" || i.estado === filtroEstado;
+      const coincideTipo = filtroTipo === "Todos" || claseDeHito(i) === filtroTipo;
       const pendientes = i.estado === "No aplica" ? 0 : faltantes(i).length;
       const coincideDocs =
         filtroDocs === "Todos" ||
         (filtroDocs === "Pendientes" && pendientes > 0) ||
         (filtroDocs === "Completos" && pendientes === 0);
-      return coincideTexto && coincideEtapa && coincideEstado && coincideDocs;
+      return coincideTexto && coincideEtapa && coincideEstado && coincideTipo && coincideDocs;
     });
-  }, [items, buscar, filtroEtapa, filtroEstado, filtroDocs]);
+  }, [items, buscar, filtroEtapa, filtroEstado, filtroDocs, filtroTipo]);
 
   const grupos = useMemo(() => {
     const mapa = new Map();
@@ -302,7 +315,12 @@ export default function TramiteDetalle() {
   );
 
   const eventuales = useMemo(
-    () => items.filter((i) => i.tipo === "eventual" || i.tipo === "propio"),
+    () => items.filter((i) => claseDeHito(i) === "eventual"),
+    [items]
+  );
+
+  const propios = useMemo(
+    () => items.filter((i) => claseDeHito(i) === "propio"),
     [items]
   );
 
@@ -554,9 +572,26 @@ export default function TramiteDetalle() {
     recargar();
   };
 
+  // Copia al catálogo lo que este hito tiene hoy; los contratos nuevos lo usarán.
+  const actualizarCatalogoConEsteHito = () => {
+    if (!tarea || !permiso.catalogo || !estadoCatalogo || estadoCatalogo.campos.length === 0) return;
+    const que = describirCamposCatalogo(estadoCatalogo.campos);
+    if (!window.confirm(`Se actualizará el catálogo con lo que tiene este hito: ${que}.\n\nLos contratos nuevos usarán ese detalle; los que ya existen no cambian. ¿Continuar?`)) return;
+    try {
+      actualizarCatalogoDesdeHito(tarea.id);
+      setNotaCatalogo(`Catálogo actualizado con “${tarea.nombre}”: ${que}. Los cambios se aplicarán a contratos nuevos.`);
+    } catch (error) {
+      setErrorTramite(error?.message || "No se pudo actualizar el catálogo.");
+      return;
+    }
+    recargar();
+  };
+
   const abrirEditarCatalogo = () => {
     if (!tarea || !permiso.catalogo) return;
-    const esDelCatalogo = String(tarea.clavePlantilla || "").startsWith("cat_");
+    // Un hito con plantilla de hito en el catálogo (base o propio) se edita; el que aún
+    // no está en el catálogo se convierte.
+    const esDelCatalogo = estadoCatalogo?.tipo === "hito";
     const etapas = catalogoDe(tramite.tipo_objeto).etapas;
     const etapaActual = etapas.find((e) => e.codigo === tarea.etapaCodigo);
     const etapa = esDelCatalogo || etapaActual
@@ -564,6 +599,8 @@ export default function TramiteDetalle() {
       : etapas[0];
     setCatalogoModo(esDelCatalogo ? "editar" : "crear");
     setCatalogoForm({
+      tipoCat: "hito",
+      silencioPositivo: false,
       clave: tarea.clavePlantilla || "",
       nombre: tarea.nombre || "",
       etapaCodigo: etapa.codigo,
@@ -595,7 +632,28 @@ export default function TramiteDetalle() {
       nombre,
     };
 
-    if (catalogoModo === "crear") {
+    if (catalogoModo === "crear" && catalogoForm.tipoCat !== "hito") {
+      const esEventual = catalogoForm.tipoCat === "eventual";
+      try {
+        convertirEnCatalogoLista(tarea.id, catalogoForm.tipoCat, {
+          nombre,
+          docs,
+          cumplimiento,
+          dias: cambios.plazoDias,
+          habiles: cambios.plazoHabiles,
+          base: cambios.plazoBase,
+          norma: cambios.norma,
+          silencioPositivo: catalogoForm.silencioPositivo,
+          // "Hitos propios" solo vale para un hito del catálogo; uno opcional necesita una etapa real.
+          etapaCodigo: catalogoForm.etapaCodigo !== "P" ? catalogoForm.etapaCodigo : undefined,
+          etapaNombre: catalogoForm.etapaCodigo !== "P" ? catalogoForm.etapaNombre : undefined,
+        });
+      } catch (error) {
+        setErrorTramite(error?.message || "No se pudo agregar al catálogo.");
+        return;
+      }
+      setNotaCatalogo(`“${nombre}” se agregó al catálogo como ${esEventual ? "hito eventual" : "hito opcional"} de ${tramite.tipo_objeto}. Los contratos nuevos lo podrán agregar desde ${esEventual ? "“+ Hito eventual”" : "“+ Hito opcional”"}.`);
+    } else if (catalogoModo === "crear") {
       const etapaCodigo = catalogoForm.etapaCodigo || "P";
       const etapaNombre = catalogoForm.etapaNombre || "Hitos propios";
       const creado = agregarCatalogoHito({
@@ -1003,7 +1061,24 @@ export default function TramiteDetalle() {
               {eventuales.map((t) => (
                 <button key={t.id} className="fila-tarea-boton" onClick={() => abrirTarea(t)}>
                   <div>
-                    <div className="codigo">{t.codigo} · {etiquetaTipoHito(t.tipo)}</div>
+                    <div className="codigo">{t.codigo} · {etiquetaClase(t)}</div>
+                    <strong>{t.nombre}</strong>
+                    <div className="ref">{(t.documentos || []).length}/{t.docsRequeridos?.length || 0} documentos · {t.estado}</div>
+                  </div>
+                  <span className={`badge ${claseEstado(t.estado)}`}>{t.estado}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="tarjeta">
+            <div className="tarjeta-cab"><h3>Hitos propios</h3>{permiso.agregar && <button className="btn mini" onClick={() => setModalHito(true)}>+ Nuevo</button>}</div>
+            <div className="cuerpo">
+              {propios.length === 0 && <div className="vacio">Sin hitos propios. Son los que creas solo para este contrato y no están en el catálogo.</div>}
+              {propios.map((t) => (
+                <button key={t.id} className="fila-tarea-boton" onClick={() => abrirTarea(t)}>
+                  <div>
+                    <div className="codigo">{t.codigo} · {etiquetaClase(t)}</div>
                     <strong>{t.nombre}</strong>
                     <div className="ref">{(t.documentos || []).length}/{t.docsRequeridos?.length || 0} documentos · {t.estado}</div>
                   </div>
@@ -1113,6 +1188,10 @@ export default function TramiteDetalle() {
                 <option value="Pendientes">Con requisitos pendientes</option>
                 <option value="Completos">Requisitos completos</option>
               </select>
+              <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value)} aria-label="Filtrar por tipo de hito">
+                <option value="Todos">Todos los tipos de hito</option>
+                {Object.entries(CLASES_HITO).map(([clave, c]) => <option key={clave} value={clave}>{c.plural}</option>)}
+              </select>
               <span className="contador">{itemsFiltrados.length} de {items.length}</span>
               {permiso.agregar && <button className="btn mini" onClick={() => { setEventualSel(""); setModalEventual(true); }}>+ Hito eventual</button>}
               {permiso.agregar && <button className="btn mini" onClick={() => setModalOpcional(true)}>+ Hito opcional</button>}
@@ -1176,10 +1255,7 @@ export default function TramiteDetalle() {
                             <div className="tarea-cuerpo">
                               <div className="tarea-titulo">
                                 <strong>{t.nombre}</strong>
-                                {t.tipo === "eventual" && <span className="badge violeta">Hito eventual</span>}
-                                {t.tipo === "opcional" && <span className="badge gris">Hito opcional</span>}
-                                {t.tipo === "recurrente" && <span className="badge azul">{t.periodo || "Recurrente"}</span>}
-                                {t.tipo === "propio" && <span className="badge gris">Propio</span>}
+                                {claseDeHito(t) !== "catalogo" && <InsigniaClase item={t} />}
                                 {procedimientos.filter((p) => p.hitoId === t.id).length > 0 && (
                                   <span className="badge violeta">{procedimientos.filter((p) => p.hitoId === t.id).length} trámite(s)</span>
                                 )}
@@ -1245,10 +1321,7 @@ export default function TramiteDetalle() {
                 <h3>{tarea.nombre}</h3>
                 <div className="chips">
                   <span className={`badge ${claseEstado(tarea.estado)}`}>{tarea.estado}</span>
-                  {(tarea.tipo === "fijo" || tarea.tipo === "recurrente") && <span className="badge azul">Hito de catálogo</span>}
-                  {tarea.tipo === "opcional" && <span className="badge gris">Hito opcional</span>}
-                  {tarea.tipo === "eventual" && <span className="badge violeta">Hito eventual</span>}
-                  {tarea.tipo === "propio" && <span className="badge gris">Hito propio</span>}
+                  <InsigniaClase item={tarea} />
                   {hitoPadre && <button type="button" className="btn mini" onClick={() => abrirTarea(hitoPadre)}>← Hito {hitoPadre.codigo}</button>}
                   {silencioProducido(tarea) && <span className="badge rojo">Silencio positivo</span>}
                   {tarea.fecha_limite && (
@@ -1337,20 +1410,32 @@ export default function TramiteDetalle() {
                   <div>
                     <h4>Catálogo de este hito</h4>
                     <span className="ref">
-                      Clave: {tarea.clavePlantilla || "—"} · {String(tarea.clavePlantilla || "").startsWith("cat_")
-                        ? "Hito de tu catálogo"
-                        : tarea.tipo === "propio" || tarea.tipo === "eventual" || String(tarea.clavePlantilla || "").startsWith("opcional:")
-                          ? "Aún no está en el catálogo"
-                          : "Catálogo base"}
+                      {estadoCatalogo
+                        ? `Está en el catálogo (${ROTULO_TIPO_CATALOGO[estadoCatalogo.tipo] || estadoCatalogo.tipo}) · clave ${estadoCatalogo.clave}`
+                        : "Aún no está en el catálogo"}
                     </span>
                   </div>
                   {permiso.catalogo && (
-                    <button type="button" className="btn mini" onClick={abrirEditarCatalogo}>
-                      {String(tarea.clavePlantilla || "").startsWith("cat_") ? "Editar catálogo" : "Convertir en catálogo"}
-                    </button>
+                    <div className="chips">
+                      {estadoCatalogo ? (
+                        <>
+                          <button type="button" className="btn mini primario" disabled={estadoCatalogo.campos.length === 0} onClick={actualizarCatalogoConEsteHito}>
+                            Actualizar catálogo con este hito
+                          </button>
+                          {estadoCatalogo.tipo === "hito" && (
+                            <button type="button" className="btn mini" onClick={abrirEditarCatalogo}>Editar catálogo</button>
+                          )}
+                        </>
+                      ) : (
+                        <button type="button" className="btn mini" onClick={abrirEditarCatalogo}>Convertir en catálogo</button>
+                      )}
+                    </div>
                   )}
                 </div>
                 <div className="catalogo-hito-datos">
+                  {estadoCatalogo && (estadoCatalogo.campos.length === 0
+                    ? <span>El catálogo ya tiene este mismo detalle.</span>
+                    : <span className="texto-ambar">El catálogo difiere en: {describirCamposCatalogo(estadoCatalogo.campos)}.</span>)}
                   <span>{tarea.docsRequeridos?.length || 0} documento(s) en la plantilla</span>
                   <span>Cumplimiento: {tarea.docCumplimiento || "Manual"}</span>
                   <span>{tarea.plazoDias ? `${tarea.plazoDias} días ${tarea.plazoHabiles ? "hábiles" : "calendario"}` : "Sin plazo automático"}</span>
@@ -1827,10 +1912,14 @@ export default function TramiteDetalle() {
           <form className="modal" onSubmit={guardarEdicionCatalogo}>
             <div className="modal-cab">
               <div>
-                <h3>{catalogoModo === "crear" ? "Convertir en hito de catálogo" : "Editar catálogo del hito"}</h3>
+                <h3>{catalogoModo === "crear" ? "Convertir en catálogo" : "Editar catálogo del hito"}</h3>
                 <span className="ref">
                   {catalogoModo === "crear"
-                    ? "Elige una etapa real para ordenarlo junto a los hitos del catálogo. “Hitos propios” lo mantiene aparte."
+                    ? (catalogoForm.tipoCat === "eventual"
+                      ? "Un hito eventual no se crea solo: se agrega al contrato cuando ocurre el hecho (ampliación, adicional, cambio de personal…)."
+                      : catalogoForm.tipoCat === "opcional"
+                        ? "Un hito opcional no se crea solo: se agrega al contrato cuando se necesita, y aparece en la etapa que elijas."
+                        : "Un hito de catálogo se crea en todos los contratos nuevos. Elige una etapa real para ordenarlo junto a los demás; “Hitos propios” lo mantiene aparte.")
                     : "Los cambios se guardan en la plantilla y aparecerán en los contratos nuevos."}
                 </span>
               </div>
@@ -1838,6 +1927,16 @@ export default function TramiteDetalle() {
             </div>
             <div className="modal-cuerpo">
               {catalogoModo === "crear" && (
+                <label className="campo-grupo">
+                  <span className="campo">Tipo de hito en el catálogo</span>
+                  <select value={catalogoForm.tipoCat || "hito"} onChange={(e) => setCatalogoForm({ ...catalogoForm, tipoCat: e.target.value })}>
+                    <option value="hito">Hito de catálogo (se crea en cada contrato nuevo)</option>
+                    <option value="eventual">Hito eventual (se agrega cuando ocurre el hecho)</option>
+                    <option value="opcional">Hito opcional (se agrega cuando se necesita)</option>
+                  </select>
+                </label>
+              )}
+              {catalogoModo === "crear" && catalogoForm.tipoCat !== "eventual" && (
                 <label className="campo-grupo">
                   <span className="campo">Etapa del catálogo</span>
                   <select
@@ -1854,7 +1953,7 @@ export default function TramiteDetalle() {
                     {catalogoDe(tramite.tipo_objeto).etapas.map((e) => (
                       <option key={e.codigo} value={e.codigo}>{e.codigo} · {e.nombre}</option>
                     ))}
-                    <option value="P">Hitos propios</option>
+                    {catalogoForm.tipoCat === "hito" && <option value="P">Hitos propios</option>}
                   </select>
                 </label>
               )}
@@ -1867,13 +1966,15 @@ export default function TramiteDetalle() {
                   <span className="campo">Plazo (días)</span>
                   <input type="number" min="0" value={catalogoForm.dias || 0} onChange={(e) => setCatalogoForm({ ...catalogoForm, dias: e.target.value })} />
                 </label>
-                <label className="campo-grupo">
-                  <span className="campo">Base del plazo</span>
-                  <select value={catalogoForm.base || "inicio"} onChange={(e) => setCatalogoForm({ ...catalogoForm, base: e.target.value })}>
-                    <option value="suscripcion">Fecha de suscripción</option>
-                    <option value="inicio">Fecha de inicio</option>
-                  </select>
-                </label>
+                {!(catalogoModo === "crear" && catalogoForm.tipoCat === "eventual") && (
+                  <label className="campo-grupo">
+                    <span className="campo">Base del plazo</span>
+                    <select value={catalogoForm.base || "inicio"} onChange={(e) => setCatalogoForm({ ...catalogoForm, base: e.target.value })}>
+                      <option value="suscripcion">Fecha de suscripción</option>
+                      <option value="inicio">Fecha de inicio</option>
+                    </select>
+                  </label>
+                )}
                 <label className="campo-grupo">
                   <span className="campo">Tipo de plazo</span>
                   <select value={catalogoForm.habiles ? "habiles" : "calendario"} onChange={(e) => setCatalogoForm({ ...catalogoForm, habiles: e.target.value === "habiles" })}>
@@ -1893,6 +1994,15 @@ export default function TramiteDetalle() {
                   <span className="campo">Norma de referencia</span>
                   <input value={catalogoForm.norma || ""} onChange={(e) => setCatalogoForm({ ...catalogoForm, norma: e.target.value })} />
                 </label>
+                {catalogoModo === "crear" && catalogoForm.tipoCat === "eventual" && (
+                  <label className="campo-grupo">
+                    <span className="campo">Silencio positivo</span>
+                    <select value={catalogoForm.silencioPositivo ? "si" : "no"} onChange={(e) => setCatalogoForm({ ...catalogoForm, silencioPositivo: e.target.value === "si" })}>
+                      <option value="no">No aplica</option>
+                      <option value="si">Aplica si la entidad no se pronuncia</option>
+                    </select>
+                  </label>
+                )}
               </div>
             </div>
             <div className="modal-pie">

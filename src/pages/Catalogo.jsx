@@ -3,7 +3,7 @@ import { getCatalogo, guardarCatalogo, restaurarCatalogo, prepararCatalogoImport
 import { descargarTexto } from "../lib/archivos.js";
 import {
   tipoDeAmbito, completarPlantilla, recorrerPlantillas, renumerarHitos,
-  siguienteCodigoEtapa, siguienteCodigoSeccion, claveUnica, moverHitoASeccion,
+  siguienteCodigoEtapa, siguienteCodigoSeccion, claveUnica, moverHitoASeccion, CLASES_HITO,
 } from "../lib/catalogo.js";
 import EditorPlantilla from "../components/EditorPlantilla.jsx";
 
@@ -189,7 +189,7 @@ export default function Catalogo() {
     const lista = c[grupo][ambito];
     const clave = claveUnica(grupo === "eventuales" ? "tramite" : "hito", lista.map((p) => p.clave));
     const base = grupo === "eventuales"
-      ? { clave, nombre: "Nuevo trámite eventual", plazoBase: "manual", nota: "Trámite eventual agregado al expediente. No se crea automáticamente." }
+      ? { clave, nombre: "Nuevo hito eventual", plazoBase: "manual", nota: "Hito eventual agregado al expediente. No se crea automáticamente." }
       : { clave, nombre: "Nuevo hito opcional", etapaCodigo: c[ambito].etapas[0]?.codigo || "", etapaNombre: c[ambito].etapas[0]?.nombre || "" };
     lista.push(nuevaPlantilla(base));
   });
@@ -204,12 +204,16 @@ export default function Catalogo() {
 
   const Fila = ({ tipo, p, indice, total, seccionId }) => {
     const restauraCon = claveRestaurar(tipo, p);
+    const clase = tipo === "hito" ? "catalogo" : tipo;
     return (
       <div className="catalogo-hito-fila" style={p.activo === false ? { opacity: 0.6 } : undefined}>
         <div>
           <strong>{p.codigo ? `${p.codigo} · ` : ""}{p.nombre}</strong>
           <span className="ref">{(p.docs || []).length} documento(s) · {resumenPlazo(p)}{p.norma ? ` · ${p.norma}` : ""}</span>
-          <div className="chips" style={{ marginTop: 4 }}>{badgesDe(p)}</div>
+          <div className="chips" style={{ marginTop: 4 }}>
+            <span className={`badge ${CLASES_HITO[clase].color}`}>{CLASES_HITO[clase].etiqueta}</span>
+            {badgesDe(p)}
+          </div>
         </div>
         <div className="chips">
           {editable && tipo !== "recurrente" && (
@@ -284,6 +288,16 @@ export default function Catalogo() {
         </div>
         <div className="ref">Sirve para pasar tus definiciones de un dispositivo a otro, por ejemplo de la PC al celular. Se exporta el catálogo guardado; al importar, el archivo se carga como borrador y no cambia nada hasta que guardes.</div>
       </details>
+      <details className="ejecutor-detalle">
+        <summary>Tipos de hito</summary>
+        <div style={{ marginTop: 10 }}>
+          {Object.values(CLASES_HITO).map((c) => (
+            <div key={c.etiqueta} style={{ marginBottom: 6 }}>
+              <span className={`badge ${c.color}`}>{c.etiqueta}</span> <span className="ref">{c.definicion}</span>
+            </div>
+          ))}
+        </div>
+      </details>
       {aviso && <div className="nota-info">{aviso}</div>}
       {error && <div className="alerta">{error}</div>}
 
@@ -348,7 +362,7 @@ export default function Catalogo() {
           {tiposDeAmbito}
           <div className="tarjeta">
             <div className="tarjeta-cab">
-              <h3>{pestana === "eventuales" ? "Trámites que se agregan cuando ocurren" : "Hitos que se agregan cuando se necesitan"}</h3>
+              <h3>{pestana === "eventuales" ? "Hitos eventuales: se agregan cuando ocurre el hecho" : "Hitos opcionales: se agregan cuando se necesitan"}</h3>
               {editable && <button type="button" className="btn mini" onClick={() => agregarALista(pestana)}>+ Agregar</button>}
             </div>
             <div className="cuerpo">

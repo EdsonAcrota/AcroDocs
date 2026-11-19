@@ -74,12 +74,13 @@ const permisosDelRol = (matriz, usuario) => {
   return Array.isArray(lista) ? lista : [];
 };
 
-// ¿El usuario puede ver este contrato? Con `ver_todos` ve cualquiera; si no,
-// solo los que tiene asignados en `usuario.contratos`.
+// ¿El usuario puede ver este contrato? Con `ver_todos` ve cualquiera; si no, o si el
+// usuario está marcado `soloAsignados` (aunque su rol vea todo), solo los que tiene
+// asignados en `usuario.contratos`.
 export const veContrato = (matriz, usuario, tramiteId) => {
   if (!usuario) return false;
   if (esGerente(usuario)) return true;
-  if (permisosDelRol(matriz, usuario).includes("ver_todos")) return true;
+  if (!usuario.soloAsignados && permisosDelRol(matriz, usuario).includes("ver_todos")) return true;
   return Array.isArray(usuario.contratos) && usuario.contratos.includes(tramiteId);
 };
 

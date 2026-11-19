@@ -1,6 +1,6 @@
 import React, { useState } from "react";
 import {
-  normalizarPasos, alertasDesdeTexto, claveUnica, pasoNuevo, ALERTAS_POR_DEFECTO,
+  CLASES_HITO, normalizarPasos, alertasDesdeTexto, claveUnica, pasoNuevo, ALERTAS_POR_DEFECTO,
   RESPONSABLES_PASO, TIPOS_REGISTRO_PASO,
 } from "../lib/catalogo.js";
 
@@ -8,7 +8,7 @@ const ROTULO_RESPONSABLE = { contratista: "Contratista", supervision: "Supervisi
 const ROTULO_REGISTRO = { asiento: "Asiento de cuaderno", presentacion: "Presentación", respuesta: "Respuesta", otro: "Otro" };
 
 // Ventana para editar una plantilla del catálogo: un hito, una sección
-// recurrente, un trámite eventual o un hito opcional. Trabaja sobre una copia y
+// recurrente, un hito eventual o un hito opcional. Trabaja sobre una copia y
 // solo entrega el resultado al pulsar "Aplicar".
 export default function EditorPlantilla({ plantilla, tipo, soloLectura, onAplicar, onCerrar }) {
   const [f, setF] = useState(() => ({
@@ -79,7 +79,7 @@ export default function EditorPlantilla({ plantilla, tipo, soloLectura, onAplica
     <div className="modal-fondo" onClick={(e) => e.target === e.currentTarget && onCerrar()}>
       <form className="modal modal-tarea" onSubmit={aplicar}>
         <div className="modal-cab">
-          <h3>{dis ? "Ver" : "Editar"} {tipo === "eventual" ? "trámite eventual" : tipo === "opcional" ? "hito opcional" : "hito"}</h3>
+          <h3>{dis ? "Ver" : "Editar"} {CLASES_HITO[tipo === "hito" ? "catalogo" : tipo]?.etiqueta.toLowerCase() || "hito"}</h3>
           <button type="button" className="cerrar" onClick={onCerrar} aria-label="Cerrar">×</button>
         </div>
         <div className="modal-cuerpo modal-tarea-cuerpo">

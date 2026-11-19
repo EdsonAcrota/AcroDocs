@@ -18,6 +18,7 @@ create table if not exists usuarios (
   rol text not null check (rol in ('gerente','socio','jefe','residente','asis_tec','asis_adm','finanzas','legal','consulta')),
   area text,
   activo boolean not null default true,
+  solo_asignados boolean not null default false,   -- ve solo los contratos de usuario_contratos aunque su rol vea todos
   creado timestamptz not null default now()
 );
 
