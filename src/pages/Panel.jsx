@@ -1,9 +1,9 @@
 import React from "react";
 import { Link } from "react-router-dom";
 import {
-  listTramites, listItems, resumenTramite, alertasPanel, hoyISO, puede, nombreEjecutor,
+  listTramites, listItems, resumenTramite, alertasPanel, hoyISO, puede, nombreEjecutor, getSession,
 } from "../lib/store.js";
-import { diasEntre } from "../lib/fechas.js";
+import { diasEntre, saludoPorHora } from "../lib/fechas.js";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -38,48 +38,30 @@ export default function Panel() {
   ];
 
   const recientes = tramites.slice(0, 5);
+  const primerNombre = (getSession()?.nombre || "").trim().split(/\s+/)[0];
+  const saludo = `${saludoPorHora(new Date().getHours())}${primerNombre ? `, ${primerNombre}` : ""}`;
 
   return (
     <div>
       <div className="vista-encabezado">
         <div>
           <div className="eyebrow">Seguimiento documentario bajo Ley 32069</div>
-          <h2>Situación de los expedientes</h2>
-          <p>Contratos, hitos y plazos legales en una sola ficha.</p>
+          <h2>{saludo}</h2>
+          <p>Esto es lo que necesita tu atención hoy.</p>
         </div>
         <Link to="/tramites" className="btn primario">Abrir contratos</Link>
       </div>
 
       <div className="kpis">
-        <div className="kpi"><div className="kpi-ico azul" aria-hidden="true">CT</div><div><div className="valor">{tramites.length}</div><div className="rotulo">Contratos registrados</div></div></div>
-        <div className="kpi"><div className="kpi-ico violeta" aria-hidden="true">HI</div><div><div className="valor">{pendientes}</div><div className="rotulo">Hitos pendientes</div></div></div>
-        <div className="kpi"><div className="kpi-ico ambar" aria-hidden="true">RQ</div><div><div className="valor">{docsPendientes}</div><div className="rotulo">Requisitos sin archivo</div></div></div>
+        <div className="kpi azul"><div className="kpi-ico azul" aria-hidden="true">CT</div><div><div className="valor">{tramites.length}</div><div className="rotulo">Contratos registrados</div></div></div>
+        <div className="kpi violeta"><div className="kpi-ico violeta" aria-hidden="true">HI</div><div><div className="valor">{pendientes}</div><div className="rotulo">Hitos pendientes</div></div></div>
+        <div className="kpi ambar"><div className="kpi-ico ambar" aria-hidden="true">RQ</div><div><div className="valor">{docsPendientes}</div><div className="rotulo">Requisitos sin archivo</div></div></div>
         {verAlertas && (
-          <div className="kpi"><div className="kpi-ico rojo" aria-hidden="true">AL</div><div><div className="valor">{alertas.length}</div><div className="rotulo">Alertas de plazo</div></div></div>
+          <div className="kpi rojo"><div className="kpi-ico rojo" aria-hidden="true">AL</div><div><div className="valor">{alertas.length}</div><div className="rotulo">Alertas de plazo</div></div></div>
         )}
       </div>
 
       <div className="grid-2">
-        <div className="tarjeta">
-          <div className="tarjeta-cab"><h3>Ficha de contratos</h3></div>
-          <div className="cuerpo">
-            {recientes.length === 0 && <div className="vacio">No hay contratos registrados.</div>}
-            {recientes.map((t) => (
-              <Link to={`/tramite/${t.id}`} key={t.id} className="fila-tramite">
-                <div className="fila-principal">
-                  <div className="codigo">{t.codigo}</div>
-                  <strong>{t.denominacion}</strong>
-                  <div className="ref">{t.entidad} · {nombreEjecutor(t)}</div>
-                </div>
-                <div className="fila-lado">
-                  <span className="badge azul">{t.tipo_objeto}</span>
-                  <span className="monto">{fmt(t.monto)}</span>
-                </div>
-              </Link>
-            ))}
-          </div>
-        </div>
-
         {verAlertas && (
         <div className="tarjeta">
           <div className="tarjeta-cab">
@@ -108,6 +90,26 @@ export default function Panel() {
           </div>
         </div>
         )}
+
+        <div className="tarjeta">
+          <div className="tarjeta-cab"><h3>Ficha de contratos</h3></div>
+          <div className="cuerpo">
+            {recientes.length === 0 && <div className="vacio">No hay contratos registrados.</div>}
+            {recientes.map((t) => (
+              <Link to={`/tramite/${t.id}`} key={t.id} className="fila-tramite">
+                <div className="fila-principal">
+                  <div className="codigo">{t.codigo}</div>
+                  <strong>{t.denominacion}</strong>
+                  <div className="ref">{t.entidad} · {nombreEjecutor(t)}</div>
+                </div>
+                <div className="fila-lado">
+                  <span className="badge azul">{t.tipo_objeto}</span>
+                  <span className="monto">{fmt(t.monto)}</span>
+                </div>
+              </Link>
+            ))}
+          </div>
+        </div>
       </div>
 
       <div className="tarjeta">

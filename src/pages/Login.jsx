@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { loginDemo } from "../lib/store.js";
 import { ROLES } from "../lib/permisos.js";
 import { USUARIOS_DEMO } from "../lib/migracion.js";
-import { hasSupabase } from "../lib/supabase.js";
+import { CLOUD_SYNC } from "../lib/cloud.js";
 
 const nombreRol = (clave) => ROLES.find((r) => r.clave === clave)?.nombre || clave;
 
@@ -62,9 +62,9 @@ export default function Login({ onLogin }) {
             ))}
           </div>
           <div className="login-nota">
-            {hasSupabase
-              ? "Supabase configurado. El demo usa la sesión local hasta conectar la base."
-              : "Sin Supabase configurado: la app guarda los datos y archivos en este navegador."}
+            {CLOUD_SYNC
+              ? "Modo nube: los datos se sincronizan con Supabase; los archivos siguen en este navegador."
+              : "Modo local: la app guarda los datos y archivos en este navegador."}
           </div>
         </div>
       </form>

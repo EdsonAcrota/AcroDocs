@@ -27,9 +27,9 @@ const AMPLIACION = [
 
 const ADICIONAL = [
   paso("asiento_necesidad", "Asiento de la necesidad del adicional", "contratista", "asiento"),
-  paso("expediente", "Presentar el expediente del adicional", "contratista", "presentacion"),
-  paso("pronunciamiento_supervision", "Pronunciamiento de la supervisión", "supervision", "respuesta"),
-  paso("resolucion_entidad", "Resolución de la entidad", "entidad", "respuesta"),
+  paso("expediente", "Presentar el expediente del adicional", "contratista", "presentacion", { dias: 15, desde: "asiento_necesidad", verificado: true }),
+  paso("pronunciamiento_supervision", "Pronunciamiento de la supervisión", "supervision", "respuesta", { dias: 5, desde: "expediente", verificado: true }),
+  paso("resolucion_entidad", "Resolución de la entidad", "entidad", "respuesta", { dias: 12, desde: "pronunciamiento_supervision", verificado: true }),
 ];
 
 const CAMBIO_PERSONAL = [
@@ -49,10 +49,42 @@ const INFORME_MENSUAL = [
   paso("conformidad", "Conformidad", "supervision", "respuesta"),
 ];
 
+// Art. 190 del Reglamento: el supervisor remite en 5 días, el proyectista opina
+// en 10 días si corresponde y la entidad absuelve en 5 días. La falta de
+// respuesta no aprueba la consulta: solo permite sustentar ampliación de plazo.
+const CONSULTA_INCIDENCIAS = [
+  paso("anotacion", "Anotar la consulta en el cuaderno de incidencias", "contratista", "asiento", { verificado: true }),
+  paso("opinion_supervision", "Opinión y remisión del supervisor", "supervision", "respuesta", { dias: 5, desde: "anotacion", verificado: true }),
+  paso("opinion_proyectista", "Opinión del proyectista (si corresponde)", "entidad", "respuesta", { dias: 10, desde: "opinion_supervision", verificado: true }),
+  paso("absolucion_entidad", "Absolución de la entidad", "entidad", "respuesta", { dias: 5, desde: "opinion_proyectista", verificado: true, alVencer: "aviso" }),
+];
+
+const MAYORES_METRADOS = [
+  paso("anotacion", "Anotar los mayores metrados", "contratista", "asiento"),
+  paso("autorizacion_supervision", "Autorización del supervisor", "supervision", "respuesta"),
+  paso("aprobacion_pago", "Aprobación de pago de la entidad", "entidad", "respuesta"),
+];
+
+const SUSPENSION_PLAZO = [
+  paso("anotacion", "Anotar la suspensión", "contratista", "asiento"),
+  paso("acuerdo", "Acuerdo de suspensión", "entidad", "respuesta"),
+  paso("reinicio", "Reinicio y programa actualizado", "contratista", "presentacion"),
+];
+
+const INTENSIFICACION = [
+  paso("sustento", "Sustento del área usuaria", "entidad", "otro"),
+  paso("acuerdo", "Acuerdo de intensificación", "contratista", "presentacion"),
+  paso("resolucion", "Resolución de aprobación", "entidad", "respuesta"),
+];
+
 export const PASOS_SEMILLA = {
   ampliacion: AMPLIACION,
   adicional: ADICIONAL,
   cambio_personal: CAMBIO_PERSONAL,
+  consulta_incidencias: CONSULTA_INCIDENCIAS,
+  mayores_metrados: MAYORES_METRADOS,
+  suspension_plazo: SUSPENSION_PLAZO,
+  intensificacion: INTENSIFICACION,
   "1.3.2": VALORIZACION,
   "2.3.2": VALORIZACION,
   "1.3.3": INFORME_MENSUAL,

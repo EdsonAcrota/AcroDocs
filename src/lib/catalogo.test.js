@@ -77,23 +77,25 @@ describe("catalogoSemilla", () => {
     expect(cat.opcionales.consultoria.map((e) => e.clave)).toEqual(["seace_consultoria"]);
   });
 
-  it("cada plantilla nace activa, sin verificar y con id propio; solo los trámites con secuencia traen pasos", () => {
+  it("cada plantilla nace activa, con verificación explícita y id propio; solo los trámites con secuencia traen pasos", () => {
     const todas = plantillasDe(catalogoSemilla());
-    expect(todas.length).toBe(76);
+    expect(todas.length).toBe(80);
     for (const p of todas) {
       expect(typeof p.id).toBe("string");
       expect(typeof p.clave).toBe("string");
-      expect(p).toMatchObject({ activo: true, verificado: false, plazoLevantamiento: null });
+      expect(typeof p.verificado).toBe("boolean");
+      expect(p).toMatchObject({ activo: true, plazoLevantamiento: null });
       expect(Array.isArray(p.pasos)).toBe(true);
       expect(Array.isArray(p.docs)).toBe(true);
     }
     expect(new Set(todas.map((p) => p.id)).size).toBe(todas.length);
+    expect(hitoPorClave(catalogoSemilla().obra, "1.1.1")).toMatchObject({ verificado: true, plazoDias: 8 });
   });
 
   it("la clave es el código del hito, de la sección recurrente o del eventual", () => {
     const cat = catalogoSemilla();
     expect(hitoPorClave(cat.obra, "1.1.1")).toMatchObject({
-      nombre: "Perfeccionamiento de contrato", plazoDias: 5, plazoBase: "suscripcion", plazoHabiles: false,
+      nombre: "Perfeccionamiento de contrato", plazoDias: 8, plazoBase: "suscripcion", plazoHabiles: true,
       cumplimiento: "Contrato suscrito",
     });
     const valorizaciones = seccionPorCodigo(cat.obra, "1.3.2");

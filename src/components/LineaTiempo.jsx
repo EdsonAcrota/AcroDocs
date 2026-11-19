@@ -5,6 +5,7 @@ import {
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
 import { guardarArchivo, descargarArchivo, eliminarArchivo } from "../lib/archivos.js";
+import { TomarFoto } from "./SubirArchivo.jsx";
 
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 
@@ -223,6 +224,10 @@ export default function LineaTiempo({ item, permiso, onCambio }) {
               <span className="campo">Archivo (cargo, carta o informe; opcional)</span>
               <input type="file" onChange={(e) => setArchivo(e.target.files?.[0] || null)} />
             </label>
+            <div className="ancho-completo">
+              <TomarFoto onChange={(e) => setArchivo(e.target.files?.[0] || null)} />
+              {archivo && <span className="ref"> Archivo elegido: {archivo.name}</span>}
+            </div>
           </div>
           <div className="chips">
             <button type="submit" className="btn primario" disabled={guardando}>{guardando ? "Guardando…" : "Guardar movimiento"}</button>

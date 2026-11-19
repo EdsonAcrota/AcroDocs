@@ -226,7 +226,7 @@ export default function Catalogo() {
       {error && <div className="alerta">{error}</div>}
 
       <div className="tabs">
-        {[["obra", "Obra"], ["consultoria", "Consultoría"], ["eventuales", "Trámites eventuales"], ["opcionales", "Hitos opcionales"]].map(([clave, rotulo]) => (
+        {[["obra", "Obra"], ["consultoria", "Consultoría"], ["eventuales", "Hitos eventuales"], ["opcionales", "Hitos opcionales"]].map(([clave, rotulo]) => (
           <button key={clave} type="button" className={pestana === clave ? "activo" : ""} onClick={() => setPestana(clave)}>{rotulo}</button>
         ))}
       </div>

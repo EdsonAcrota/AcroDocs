@@ -10,7 +10,7 @@ export const PERMISOS = [
   { clave: "editar", grupo: "Contratos", nombre: "Editar datos del contrato" },
   { clave: "eliminar", grupo: "Contratos", nombre: "Eliminar contratos", peligroso: true },
   { clave: "estado", grupo: "Hitos", nombre: "Cambiar estado de hitos" },
-  { clave: "agregar", grupo: "Hitos", nombre: "Agregar hitos y trámites eventuales" },
+  { clave: "agregar", grupo: "Hitos", nombre: "Agregar hitos, hitos eventuales y trámites" },
   { clave: "plazos", grupo: "Hitos", nombre: "Modificar plazos y fechas límite" },
   { clave: "borrar_hito", grupo: "Hitos", nombre: "Eliminar hitos", peligroso: true },
   { clave: "subir", grupo: "Documentos", nombre: "Subir documentos" },

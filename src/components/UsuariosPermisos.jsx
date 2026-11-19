@@ -193,7 +193,7 @@ export default function UsuariosPermisos({ onCambio }) {
           )}
 
           <div className="tabla-wrap">
-            <table className="tabla tabla-usuarios">
+            <table className="tabla tabla-usuarios tabla-tarjetas">
               <thead>
                 <tr>
                   <th>Usuario</th>
@@ -215,8 +215,8 @@ export default function UsuariosPermisos({ onCambio }) {
                         {propia && <span className="badge gris usuario-yo">Tú</span>}
                         <div className="ref">{u.email}</div>
                       </td>
-                      <td><span className={`badge ${u.rol === "gerente" ? "violeta" : "azul"}`}>{nombreRol(u.rol)}</span></td>
-                      <td>
+                      <td data-label="Rol"><span className={`badge ${u.rol === "gerente" ? "violeta" : "azul"}`}>{nombreRol(u.rol)}</span></td>
+                      <td data-label="Contratos">
                         {veTodos(u.rol) ? (
                           <span className="ref">Todos</span>
                         ) : u.contratos.length === 0 ? (
@@ -227,8 +227,8 @@ export default function UsuariosPermisos({ onCambio }) {
                           </div>
                         )}
                       </td>
-                      <td><span className={`badge ${u.activo ? "verde" : "gris"}`}>{u.activo ? "Activo" : "Inactivo"}</span></td>
-                      <td>
+                      <td data-label="Estado"><span className={`badge ${u.activo ? "verde" : "gris"}`}>{u.activo ? "Activo" : "Inactivo"}</span></td>
+                      <td data-label="Acciones">
                         <div className="chips">
                           <button
                             type="button"

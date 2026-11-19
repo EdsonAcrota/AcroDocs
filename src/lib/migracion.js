@@ -2,10 +2,10 @@
 // tocan localStorage ni modifican su entrada. El store solo las invoca.
 
 import { MATRIZ_INICIAL } from "./permisos.js";
-import { FERIADOS_2026 } from "./fechas.js";
+import { FERIADOS_2026, sumarDias, sumarHabiles } from "./fechas.js";
 import {
-  catalogoSemilla, ubicarPlantillas, aplicarCambiosPlantilla, plantillaDesdeHitoPersonal,
-  seccionPara, ambitoDe,
+  catalogoSemilla, recorrerPlantillas, ubicarPlantillas, aplicarCambiosPlantilla,
+  plantillaDesdeHitoPersonal, seccionPara, ambitoDe, AMBITOS,
 } from "./catalogo.js";
 
 const demo = (x, rol, nombre, contratos = []) => ({
@@ -81,6 +81,135 @@ export const fundirCatalogo = (plantillasDocs, catalogoHitos) => {
     seccion.hitos.push(plantilla);
   }
   return catalogo;
+};
+
+// Agrega plantillas nuevas de la semilla sin tocar las que el usuario editó.
+// Se usa al leer un v7 guardado, para que las mejoras del catálogo (por ejemplo
+// nuevos trámites eventuales) aparezcan en instalaciones existentes.
+export const fusionarNovedadesCatalogo = (catalogo) => {
+  if (!catalogo || typeof catalogo !== "object") return false;
+  const semilla = catalogoSemilla();
+  const existentes = new Set();
+  recorrerPlantillas(catalogo, (u) => existentes.add(`${u.tipo}|${u.ambito}|${u.plantilla.clave}`));
+
+  // Solo se incorporan los trámites eventuales nuevos. No se reinsertan hitos
+  // fijos ni opcionales que el usuario pudo quitar deliberadamente del catálogo.
+  const NUEVOS = ["consulta_incidencias", "mayores_metrados", "intensificacion", "suspension_plazo"];
+  let cambio = false;
+  recorrerPlantillas(semilla, (u) => {
+    const clave = u.plantilla.clave;
+    if (u.tipo !== "eventual" || !NUEVOS.includes(clave)) return;
+    if (!clave || existentes.has(`${u.tipo}|${u.ambito}|${clave}`)) return;
+    const copia = JSON.parse(JSON.stringify(u.plantilla));
+    if (u.tipo === "hito" || u.tipo === "recurrente") {
+      const etapa = (catalogo[u.ambito]?.etapas || []).find((e) => e.codigo === u.etapa?.codigo);
+      const seccion = (etapa?.secciones || []).find((s) => s.codigo === u.seccion?.codigo);
+      if (!seccion) return;
+      if (u.tipo === "recurrente") seccion.plantilla = copia;
+      else {
+        if (!Array.isArray(seccion.hitos)) seccion.hitos = [];
+        seccion.hitos.push(copia);
+      }
+    } else {
+      const lista = u.tipo === "eventual" ? "eventuales" : "opcionales";
+      if (!catalogo[lista]?.[u.ambito]) return;
+      catalogo[lista][u.ambito].push(copia);
+    }
+    existentes.add(`${u.tipo}|${u.ambito}|${clave}`);
+    cambio = true;
+  });
+  return cambio;
+};
+
+// Actualiza el perfeccionamiento con los requisitos de las bases integradas
+// (art. 88 del Reglamento). Solo actúa si la plantilla conserva exactamente la
+// lista anterior: si el usuario ya la editó, se respeta su versión.
+const PERFECCIONAMIENTO_ANTERIOR = {
+  "1.1.1": [
+    "Contrato suscrito",
+    "Vigencia de poder del representante legal",
+    "DNI del representante legal",
+    "RUC de la empresa contratista",
+    "Presupuesto de obra",
+    "Declaración jurada de no impedimento",
+    "Relación de maquinarias y equipos",
+  ],
+  "2.1.1": [
+    "Contrato suscrito",
+    "DNI del representante legal",
+    "Presupuesto del servicio",
+    "CV del equipo profesional",
+    "Declaración jurada de no impedimento",
+  ],
+};
+
+export const aplicarPerfeccionamientoBases = (catalogo) => {
+  const semilla = catalogoSemilla();
+  const buscar = (arbol, clave) => {
+    let encontrada = null;
+    recorrerPlantillas(arbol, (u) => {
+      if (u.tipo === "hito" && u.plantilla.clave === clave) encontrada = u.plantilla;
+    });
+    return encontrada;
+  };
+  let cambio = false;
+  for (const clave of Object.keys(PERFECCIONAMIENTO_ANTERIOR)) {
+    const destino = buscar(catalogo, clave);
+    const origen = buscar(semilla, clave);
+    const anterior = PERFECCIONAMIENTO_ANTERIOR[clave];
+    if (!destino || !origen) continue;
+    if (JSON.stringify(destino.docs) === JSON.stringify(anterior)) {
+      Object.assign(destino, { ...origen, id: destino.id });
+      cambio = true;
+    } else if (destino.verificado !== true && JSON.stringify(destino.docs) === JSON.stringify(origen.docs)) {
+      destino.verificado = true;
+      cambio = true;
+    }
+  }
+  return cambio;
+};
+
+// Lleva el nuevo contenido de perfeccionamiento a los hitos ya generados en los
+// contratos existentes, sin tocar sus archivos, estados ni fechas de seguimiento.
+// Solo actualiza los hitos que todavía conservan la lista anterior.
+export const actualizarPerfeccionamientoItems = (data) => {
+  if (!data || !Array.isArray(data.items)) return false;
+  const semilla = catalogoSemilla();
+  const buscar = (clave) => {
+    let encontrada = null;
+    recorrerPlantillas(semilla, (u) => {
+      if (u.tipo === "hito" && u.plantilla.clave === clave) encontrada = u.plantilla;
+    });
+    return encontrada;
+  };
+  const feriados = Array.isArray(data.feriados) && data.feriados.length ? data.feriados : FERIADOS_2026;
+  let cambio = false;
+  for (const item of data.items) {
+    const anterior = PERFECCIONAMIENTO_ANTERIOR[item.codigo];
+    if (!anterior || JSON.stringify(item.docsRequeridos) !== JSON.stringify(anterior)) continue;
+    const plantilla = buscar(item.codigo);
+    if (!plantilla) continue;
+    item.docsRequeridos = [...plantilla.docs];
+    item.docCumplimiento = plantilla.cumplimiento || item.docCumplimiento;
+    item.plazoDias = plantilla.plazoDias;
+    item.plazoBase = plantilla.plazoBase;
+    item.plazoHabiles = plantilla.plazoHabiles !== false;
+    item.norma = plantilla.norma || item.norma;
+    item.nota = plantilla.nota || item.nota;
+    const contrato = (data.tramites || []).find((t) => t.id === item.tramite_id);
+    if (contrato && item.plazoDias) {
+      const base = item.plazoBase === "suscripcion"
+        ? (contrato.fecha_suscripcion || contrato.created_at || contrato.fecha_inicio)
+        : (contrato.fecha_inicio || contrato.created_at);
+      if (base) {
+        item.fecha_limite = item.plazoHabiles
+          ? sumarHabiles(base, item.plazoDias, feriados)
+          : sumarDias(base, item.plazoDias);
+      }
+    }
+    cambio = true;
+  }
+  return cambio;
 };
 
 // v6 -> v7. Conserva todos los contratos, hitos y documentos. La sesión se

@@ -1,5 +1,8 @@
 import { describe, it, expect } from "vitest";
-import { migrarV6aV7, USUARIOS_DEMO } from "./migracion.js";
+import {
+  migrarV6aV7, USUARIOS_DEMO, aplicarPerfeccionamientoBases, actualizarPerfeccionamientoItems,
+} from "./migracion.js";
+import { catalogoSemilla } from "./catalogo.js";
 import { MATRIZ_INICIAL, ROLES } from "./permisos.js";
 
 const v6Base = () => ({
@@ -146,7 +149,7 @@ describe("migrarV6aV7: catálogo almacenado", () => {
     expect(v7.plantillasDocs).toBeUndefined();
     expect(v7.catalogoHitos).toBeUndefined();
     const { hito } = hitoPorClave(v7.catalogo.obra, "1.1.1");
-    expect(hito).toMatchObject({ docs: ["Contrato firmado"], cumplimiento: "Contrato firmado", verificado: false, pasos: [] });
+    expect(hito).toMatchObject({ docs: ["Contrato firmado"], cumplimiento: "Contrato firmado", verificado: true, pasos: [] });
     expect(hitoPorClave(v7.catalogo.obra, "1.1.2").hito).toMatchObject({
       nombre: "Garantía editada", plazoDias: 7, plazoHabiles: true, nota: "N", docs: ["Carta"],
     });
@@ -201,5 +204,49 @@ describe("migrarV6aV7: catálogo almacenado", () => {
     const v6 = v6Base();
     v6.catalogo = { obra: { etapas: [] }, consultoria: { etapas: [] }, eventuales: { obra: [], consultoria: [] }, opcionales: { obra: [], consultoria: [] } };
     expect(migrarV6aV7(v6).catalogo).toEqual(v6.catalogo);
+  });
+});
+
+describe("perfeccionamiento según bases integradas", () => {
+  const anteriorObra = [
+    "Contrato suscrito",
+    "Vigencia de poder del representante legal",
+    "DNI del representante legal",
+    "RUC de la empresa contratista",
+    "Presupuesto de obra",
+    "Declaración jurada de no impedimento",
+    "Relación de maquinarias y equipos",
+  ];
+
+  it("actualiza la plantilla de obra y respeta una lista editada por el usuario", () => {
+    const catalogo = catalogoSemilla();
+    const plantilla = hitoPorClave(catalogo.obra, "1.1.1").hito;
+    plantilla.docs = [...anteriorObra];
+    expect(aplicarPerfeccionamientoBases(catalogo)).toBe(true);
+    expect(plantilla.docs).toContain("CCLC del ejecutor de obra (RNP)");
+    expect(plantilla).toMatchObject({ plazoDias: 8, plazoHabiles: true, verificado: true });
+
+    const editado = catalogoSemilla();
+    const otra = hitoPorClave(editado.obra, "1.1.1").hito;
+    otra.docs = ["Solo mi lista"];
+    expect(aplicarPerfeccionamientoBases(editado)).toBe(false);
+    expect(otra.docs).toEqual(["Solo mi lista"]);
+  });
+
+  it("actualiza el hito existente sin tocar archivos ni estado", () => {
+    const data = {
+      tramites: [{ id: "t-001", fecha_suscripcion: "2026-05-25" }],
+      feriados: [],
+      items: [{
+        codigo: "1.1.1", tramite_id: "t-001", estado: "Completado",
+        documentos: [{ archivoId: "a1" }], docsRequeridos: [...anteriorObra],
+      }],
+    };
+    expect(actualizarPerfeccionamientoItems(data)).toBe(true);
+    expect(data.items[0]).toMatchObject({
+      plazoDias: 8, plazoHabiles: true, fecha_limite: "2026-06-04", estado: "Completado",
+    });
+    expect(data.items[0].docsRequeridos).toContain("CCLC del ejecutor de obra (RNP)");
+    expect(data.items[0].documentos).toEqual([{ archivoId: "a1" }]);
   });
 });

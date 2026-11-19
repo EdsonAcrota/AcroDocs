@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { hoy, sumarDias, esHabil, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
+import { hoy, sumarDias, esHabil, sumarHabiles, diasEntre, saludoPorHora, FERIADOS_2026 } from "./fechas.js";
 
 describe("fechas", () => {
   it("sumarHabiles salta sábado, domingo y feriado", () => {
@@ -40,5 +40,14 @@ describe("fechas", () => {
   it("FERIADOS_2026 es una lista de fechas ISO", () => {
     expect(FERIADOS_2026.length).toBeGreaterThan(0);
     for (const f of FERIADOS_2026) expect(f).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+  });
+
+  it("saludoPorHora: días de 5 a 11, tardes de 12 a 18, noches el resto", () => {
+    expect(saludoPorHora(5)).toBe("Buenos días");
+    expect(saludoPorHora(11)).toBe("Buenos días");
+    expect(saludoPorHora(12)).toBe("Buenas tardes");
+    expect(saludoPorHora(18)).toBe("Buenas tardes");
+    expect(saludoPorHora(19)).toBe("Buenas noches");
+    expect(saludoPorHora(4)).toBe("Buenas noches");
   });
 });

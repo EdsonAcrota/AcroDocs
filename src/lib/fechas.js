@@ -43,6 +43,13 @@ export const sumarHabiles = (fecha, dias, feriados) => {
   return d.toISOString().slice(0, 10);
 };
 
+// Saludo del Panel: de 5 a 11 días, de 12 a 18 tardes y el resto noches.
+export const saludoPorHora = (hora) => {
+  if (hora >= 5 && hora < 12) return "Buenos días";
+  if (hora >= 12 && hora < 19) return "Buenas tardes";
+  return "Buenas noches";
+};
+
 export const diasEntre = (a, b) => {
   if (!a || !b) return 0;
   const d1 = new Date(`${a}T12:00:00`);

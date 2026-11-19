@@ -95,7 +95,7 @@ export default function Tramites() {
         </div>
 
         <div className="tabla-wrap">
-          <table className="tabla">
+          <table className="tabla tabla-tarjetas tabla-contratos">
             <thead>
               <tr>
                 <th>Código</th><th>Denominación</th><th>Objeto</th><th>Ejecutor</th>
@@ -112,20 +112,24 @@ export default function Tramites() {
                       <div className="celda-principal">{t.denominacion}</div>
                       <div className="ref">{t.entidad} · {fmt(t.monto)}</div>
                     </td>
-                    <td><span className="badge azul">{t.tipo_objeto}</span></td>
-                    <td>
-                      <div className="celda-principal">{nombres.get(t.id)}</div>
-                      <div className="ref">{esConsorcio(t) ? `Consorcio · ${(t.ejecutor.integrantes || []).length} integrante(s)` : "Ejecución directa"}</div>
-                    </td>
-                    <td>
-                      <div className="avance-tabla">
-                        <div className="barra"><div className="barra-fill" style={{ width: `${r.pct}%` }} /></div>
-                        <span>{r.completados}/{r.total} · {r.pct}%</span>
+                    <td data-label="Objeto"><span className="badge azul">{t.tipo_objeto}</span></td>
+                    <td data-label="Ejecutor">
+                      <div>
+                        <div className="celda-principal">{nombres.get(t.id)}</div>
+                        <div className="ref">{esConsorcio(t) ? `Consorcio · ${(t.ejecutor.integrantes || []).length} integrante(s)` : "Ejecución directa"}</div>
                       </div>
-                      <div className="ref">{r.docsCargados} archivo(s) · {r.requisitosPendientes} pendiente(s)</div>
                     </td>
-                    <td className="fechas">{fecha(t.fecha_inicio)}<br /><span className="ref">al {fecha(t.fecha_fin)}</span></td>
-                    <td><span className={`badge ${t.estado === "En ejecución" ? "verde" : t.estado === "Paralizado" ? "rojo" : "gris"}`}>{t.estado}</span></td>
+                    <td data-label="Expediente">
+                      <div className="celda-avance">
+                        <div className="avance-tabla">
+                          <div className="barra"><div className="barra-fill" style={{ width: `${r.pct}%` }} /></div>
+                          <span>{r.completados}/{r.total} · {r.pct}%</span>
+                        </div>
+                        <div className="ref">{r.docsCargados} archivo(s) · {r.requisitosPendientes} pendiente(s)</div>
+                      </div>
+                    </td>
+                    <td className="fechas" data-label="Ejecución"><div>{fecha(t.fecha_inicio)}<br /><span className="ref">al {fecha(t.fecha_fin)}</span></div></td>
+                    <td data-label="Estado"><span className={`badge ${t.estado === "En ejecución" ? "verde" : t.estado === "Paralizado" ? "rojo" : "gris"}`}>{t.estado}</span></td>
                     <td><Link className="btn mini" to={`/tramite/${t.id}`}>Abrir</Link></td>
                   </tr>
                 );
@@ -152,7 +156,7 @@ export default function Tramites() {
                 <label className="campo-grupo"><span className="campo">Código *</span><input value={form.codigo} onChange={set("codigo")} placeholder="OC-2026-003" /></label>
                 <label className="campo-grupo"><span className="campo">Tipo de objeto</span>
                   <select value={form.tipo_objeto} onChange={set("tipo_objeto")}>
-                    <option>Obra</option><option>Consultoría de obra</option>
+                    <option>Obra</option><option>Consultoría de obra</option><option>Servicio</option><option>Bien</option>
                   </select>
                 </label>
                 <label className="campo-grupo ancho-completo"><span className="campo">Denominación *</span><input value={form.denominacion} onChange={set("denominacion")} placeholder="Mejoramiento de…" /></label>

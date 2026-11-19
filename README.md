@@ -1,6 +1,6 @@
 # AcroDocs — Expediente documentario por contrato (React)
 
-Control documentario para una **empresa contratista** de obra y consultoría de obra bajo la Ley 32069: el expediente de cada contrato, el seguimiento de cada trámite ante la **supervisión** y la **entidad**, y el registro de los cargos de mesa de partes.
+Control documentario para una **empresa contratista** bajo la Ley 32069: el expediente de cada **contrato** (obra, consultoría de obra, servicio o bien) y el seguimiento de cada **trámite** como flujo completo de un documento hasta el cumplimiento del hito.
 
 Cada contrato genera un **expediente jerárquico**: etapas, secciones, hitos numerados y documentos adjuntos por hito. Los trámites que pasan por varias manos (ampliación de plazo, adicionales, cambio de personal, valorizaciones) se siguen **paso a paso**, cada paso con su plazo y su responsable.
 
@@ -75,13 +75,42 @@ Para consultoría se usa la serie `2.x` y el trámite eventual se numera en `2.5
 
 ### Tipos de hito
 
-- **Fijo:** se crea automáticamente al registrar el contrato.
-- **Recurrente:** una fila por mes o por año (SCTR, valorizaciones, informes, renovación de carta fianza). El SCTR se crea con el mes de inicio; los siguientes se agregan desde el expediente.
-- **Opcional:** no se genera por defecto; se agrega con **“+ Hito opcional”**.
-- **Eventual:** se agrega con **“+ Nuevo trámite”** cuando ocurre el hecho: cambio de personal clave, ampliación de plazo, adicional o deductivo, paralización, sustitución del supervisor.
-- **Propio:** hito manual para casos no previstos.
+- **Hito de catálogo (fijo o recurrente):** se crea automáticamente al registrar el contrato. Los recurrentes generan una fila por mes o por año (SCTR, valorizaciones, informes, renovación de carta fianza).
+- **Hito opcional:** no se genera por defecto; se agrega con **“+ Hito opcional”**.
+- **Hito eventual:** se agrega con **“+ Hito eventual”** cuando ocurre el hecho: cambio de personal clave, ampliación de plazo, adicional o deductivo, mayores metrados, consulta sobre incidencias, suspensión, intensificación del programa, paralización o sustitución del supervisor.
+- **Hito propio:** hito manual para casos no previstos.
 
-Cada hito tiene estado, responsable, fecha de presentación y límite, plazo, norma, documentos requeridos y archivos cargados.
+Cada hito tiene estado, responsable, fecha de presentación y límite, plazo, norma, documentos requeridos y archivos cargados. Para contratos de **Servicio** o **Bien**, mientras no haya catálogos propios, el sistema usa el catálogo de Obra como base.
+
+El **perfeccionamiento de contrato** sigue los requisitos del **art. 88 del Reglamento**, tomados de las bases integradas: garantías, contrato de consorcio, CCI o cuenta en el exterior, vigencia de poder y DNI, institución arbitral, notificaciones por correo, CCLC del RNP (obra), plan de trabajo, análisis de precios y gastos generales, capacidad técnica y profesional del personal clave, centro de administración de JPRD y declaración jurada de desafectación. La presentación es de **8 o 5 días hábiles**, según corresponda.
+
+### Trámite
+
+- **Trámite:** no es un hito. Es **todo el flujo de un documento** hasta obtener el cumplimiento del hito. Se crea con **“+ Nuevo trámite”**, muestra automáticamente la entidad y la obra del contrato y permite elegir el hito objetivo.
+- **Movimientos:** cada avance del flujo (asiento, presentación, observación, conformidad, pronunciamiento), con fecha, hora, número de registro de la oficina de la entidad, oficina, número de documento, nota, usuario, dependencias y archivo. El registro de un movimiento se hace con **“Registrar trámite”**.
+- No hay secciones separadas de cargos ni de documentos internos: esos datos son parte de los movimientos del trámite.
+
+Desde la ficha de un hito se ven sus trámites y se abre cualquiera de ellos; desde el trámite se vuelve al hito.
+
+Siguiendo las buenas prácticas documentales, cada trámite lleva **número correlativo** (`TR-AÑO-0001`), **estados normalizados** (Borrador → Visado → Por despacho → Enviado → Recibido → En atención → Atendido → Archivado), **prioridad** (Normal, Urgente, Muy urgente), **trazabilidad** con usuario, fecha, origen y destino en cada movimiento, y se **archiva automáticamente** cuando el hito se completa. La entidad, la obra, el hito y el asunto se llenan solos para reducir la captura manual.
+
+### Hitos eventuales y base legal (Ley 32069 y su Reglamento)
+
+Los hitos eventuales disponibles en el catálogo para **Obra** son:
+
+| Hito eventual | Base legal | Plazos principales que sigue el flujo |
+|---|---|---|
+| Consulta sobre incidencias en obra | Art. 190 | Supervisor 5 días; proyectista 10 días si corresponde; entidad 5 días. Sin respuesta no se aprueba la consulta: solo habilita sustentar ampliación de plazo. |
+| Cambio de personal clave | Art. 189 | Se solicita 10 días hábiles antes; la entidad se pronuncia en 5 días hábiles; silencio positivo. |
+| Ampliación de plazo | Arts. 198 y 200 | Contratista 10 días hábiles; supervisor 5 días hábiles; entidad 10 días hábiles; silencio positivo. |
+| Presupuesto adicional de obra | Arts. 191, 194 y 195 | Expediente 15 días; supervisor 5 días; entidad 12 días hábiles en solo construcción y 10 en diseño y construcción. |
+| Mayores metrados | Art. 197 | Se anotan en el cuaderno de incidencias, los autoriza el supervisor y se pagan en la valorización. |
+| Suspensión de plazo | Art. 202 | Se anota, se acuerda y se reinicia con programa actualizado. |
+| Intensificación del programa | Arts. 191 y 192 | Requiere sustento del área usuaria, acuerdo de las partes y resolución. |
+| Paralización de obra | Arts. 202 y 107 | Se documenta en el cuaderno de incidencias. |
+| Sustitución del supervisor | Ley 32069 y Reglamento | Según lo previsto en el contrato. |
+
+Los trámites del **proceso de selección** que aparecen en las bases integradas —consultas y observaciones a las bases, absolución y elevación al OECE— son anteriores al contrato y no se gestionan en este expediente. De las bases revisadas se verificó, por ejemplo, que en la **Licitación Pública de Obras** las consultas se presentan en un plazo no menor de **7 días hábiles** desde la convocatoria, y en el **Concurso Público Abreviado para Consultoría de Obra** en un plazo no menor de **3 días hábiles**.
 
 ## Contratos en consorcio
 
@@ -119,19 +148,9 @@ Se calculan al abrir el Panel, solo para los roles con el permiso de alertas y s
 - **Otros hitos:** hitos sin pasos con una sola fecha límite.
 - **Plazos por definir:** pasos de la otra parte sin plazo (solo para quien edita el catálogo). **Un paso sin plazo no genera alertas de vencimiento.**
 
-## Mesa de partes
-
-Pantalla **Mesa de partes** con el registro de cargos: fecha y hora de recepción, entidad, oficina, **número de registro**, tipo y número de documento, asunto, emisor (empresa o consorcio), quién lo presentó y el cargo sellado escaneado.
-
-- Por defecto muestra los cargos **de hoy**; filtra por fechas, contrato, entidad, emisor y texto, y **exporta a CSV** (separador `;`, abre bien en Excel).
-- Un cargo puede ir ligado a un **contrato**, a un **hito** y a un **paso**. Al elegir el paso, la fecha de recepción cuenta como la presentación: crea el movimiento y arranca el plazo de la otra parte.
-- Cada contrato tiene su pestaña **Cargos**.
-- Anular un cargo anula también su movimiento. Eliminarlo definitivamente exige el permiso de eliminar documentos.
-- Quien no ve todos los contratos (el residente) ve los cargos de sus contratos y los que registró él mismo.
-
 ## Catálogo completo
 
-La pantalla **Catálogo** muestra todo lo que se genera en los contratos nuevos: etapas, secciones, hitos, trámites eventuales y hitos opcionales. Quien tiene el permiso de editar el catálogo puede:
+La pantalla **Catálogo** muestra todo lo que se genera en los contratos nuevos: etapas, secciones, hitos, hitos eventuales y hitos opcionales. Quien tiene el permiso de editar el catálogo puede:
 
 - cambiar nombres, **documentos requeridos**, documento de cumplimiento, plazos (días, desde cuándo, hábiles o calendario), norma y nota;
 - definir los **pasos** de cada trámite y el plazo para levantar observaciones;
@@ -162,16 +181,53 @@ location.reload();
 
 El demo incluye dos contratos (`DEMO-OC-2026-001` y `DEMO-CA-2026-002`), hitos recurrentes y un trámite eventual de cambio de personal.
 
-## Etapa 2: pasar a PostgreSQL / Supabase
+## Despliegue con Vercel + Supabase
 
-`schema.sql` describe el modelo completo (usuarios, permisos por rol, contratos con su ejecutor, hitos con sus pasos, movimientos, cargos, historial, adjuntos con versiones). Todavía **no está conectado a la app**.
+La app sigue funcionando en local sin configuración. Para desplegarla en modo nube:
 
-1. Crea un proyecto en Supabase y ejecuta `schema.sql`.
-2. Crea el bucket `adjuntos` en Supabase Storage.
-3. Copia `.env.example` a `.env.local` y completa las variables.
-4. Reemplaza la capa local (`src/lib/store.js` y `src/lib/archivos.js`) por consultas a las tablas y al bucket, con inicio de sesión real y políticas RLS por rol. Hoy los permisos se aplican en la interfaz y en el almacén local; con servidor los hará cumplir la base de datos.
+### 1. Supabase
 
-> Las funciones de `api/` (Vercel) son del esquema anterior y no están conectadas al frontend; no las despliegues tal como están (usan la clave de servicio sin autenticar al usuario).
+1. Crea un proyecto en [Supabase](https://supabase.com).
+2. Abre **SQL Editor** y ejecuta todo `schema.sql`. Ese archivo crea las tablas del modelo (`tramites`, `tramite_items`, `procedimientos`, `movimientos`, `historial`, adjuntos, usuarios, permisos…), la tabla `app_states`, el bucket `adjuntos` y las políticas del service role.
+3. En **Project Settings → API** copia:
+   - `Project URL`
+   - `anon key`
+   - `service_role key` (solo servidor; **nunca** la pongas en variables `VITE_*`).
+
+### 2. Variables de entorno
+
+En Vercel (**Settings → Environment Variables**) configura:
+
+| Variable | Valor |
+|---|---|
+| `SUPABASE_URL` | Project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | service_role key |
+| `VITE_SUPABASE_URL` | Project URL |
+| `VITE_SUPABASE_ANON_KEY` | anon key |
+| `APP_KEY` | Un secreto largo y aleatorio |
+| `VITE_APP_KEY` | El **mismo** secreto que `APP_KEY` |
+| `VITE_CLOUD_SYNC` | `true` |
+
+Para probar en local, copia `.env.example` a `.env.local` con los mismos valores.
+
+### 3. Vercel
+
+1. Sube el proyecto a GitHub/GitLab/Bitbucket.
+2. En Vercel: **Add New → Project** y selecciona el repositorio.
+3. Framework: **Vite**. Build: `npm run build`. Output: `dist`. `vercel.json` ya incluye los rewrites para React Router.
+4. Deploy.
+
+Verifica `https://TU-DOMINIO.vercel.app/api/health`: debe responder `ok: true`, `supabase: true` y `sync: true`.
+
+### Cómo funciona la sincronización
+
+- Con `VITE_CLOUD_SYNC=true`, al abrir la app se descarga el estado desde `/api/state` y se coloca en `localStorage` antes de renderizar.
+- Cada cambio guarda el estado local y, con un pequeño retardo, lo envía a `app_states` mediante `/api/state` (usa `APP_KEY` como secreto compartido).
+- Las APIs usan el **service role** de Supabase; la clave nunca llega al navegador.
+- Los archivos adjuntos siguen en IndexedDB por ahora. `/api/files` ya permite subir/descargar al bucket `adjuntos` y servirá para migrarlos después.
+- El inicio de sesión y los roles siguen siendo locales; Supabase Auth no está integrado todavía.
+
+> Para un despliegue multiusuario real, el siguiente paso es sustituir la sesión local por Supabase Auth y reflejar los roles en RLS. La app ya tiene las tablas `usuarios` y `permisos_roles` preparadas.
 
 ## Estructura
 
@@ -183,17 +239,21 @@ src/
   lib/flujo.js               motor de pasos: plazos, observaciones, estado
   lib/pasosSemilla.js        secuencias iniciales de cada trámite
   lib/catalogo.js            catálogo (semilla y generación de hitos)
-  lib/cargos.js              visibilidad y CSV de la mesa de partes
+  lib/cargos.js              tipos de documento del flujo (para movimientos)
   lib/migracion.js           migración de v6 a v7
-  lib/store.js               persistencia local, permisos, historial, movimientos, cargos, alertas
+  lib/store.js               persistencia local, permisos, historial, trámites, movimientos, alertas
   lib/archivos.js            IndexedDB: guardar, descargar y eliminar archivos
-  components/                línea de tiempo, usuarios y permisos, cargos, editor de plantilla, historial
-  pages/                     Login, Panel, Tramites, TramiteDetalle, Catalogo, MesaPartes, Configuracion
+  lib/cloud.js               sincronización opcional con Supabase (VITE_CLOUD_SYNC)
+  components/                línea de tiempo, usuarios y permisos, editor de plantilla, historial
+  pages/                     Login, Panel, Tramites, TramiteDetalle, Catalogo, Configuracion
+api/                         health, state y files (funciones serverless de Vercel)
 docs/superpowers/            diseño y plan de implementación
-schema.sql                   esquema PostgreSQL/Supabase (etapa 2)
+schema.sql                   esquema PostgreSQL/Supabase (incluye app_states y bucket)
+vercel.json                  build, output y rewrites para Vercel
+.env.example                 variables de entorno de ejemplo
 iniciar-demo.bat             lanzador local
 ```
 
 ## Nota sobre plazos
 
-Los plazos del catálogo son referenciales y configurables. **Los de la supervisión y la entidad vienen sin definir** (o marcados “por verificar”): antes de usar el sistema en producción hay que validarlos contra la Ley 32069, su Reglamento y los procedimientos de cada entidad, y marcarlos como verificados en el Catálogo. El plazo de 10 días hábiles para presentar la solicitud de ampliación de plazo, contado desde el fin de la causal, es dato de la empresa. Los feriados se configuran en **Configuración** y se usan para calcular los plazos en días hábiles.
+Los plazos del catálogo son configurables. Los pasos con plazo de la Ley 32069 ya vienen marcados como **verificados** (perfeccionamiento, consultas, ampliación y adicionales); los demás siguen “por verificar” y deben validarse contra el Reglamento y los procedimientos de cada entidad antes de producción. El plazo de 10 días hábiles para presentar la solicitud de ampliación de plazo, contado desde el fin de la causal, es dato de la empresa. Los feriados se configuran en **Configuración** y se usan para calcular los plazos en días hábiles.

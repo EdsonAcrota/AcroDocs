@@ -1,6 +1,8 @@
 -- Esquema PostgreSQL para Supabase (AcroDocs Cloud)
--- Referencia para la etapa 2 (servidor): refleja el modelo v7 que hoy vive en el
--- navegador (localStorage/IndexedDB). Todavía no está conectado a la app.
+-- Refleja el modelo v7. El despliegue usa además la tabla `app_states` como
+-- puente de sincronización: la app local envía su estado completo (JSONB) y
+-- los archivos van al bucket `adjuntos`. Las tablas relacionales describen el
+-- modelo destino y quedan listas para una migración futura.
 -- Modelo: un contrato = un expediente jerárquico de hitos.
 -- Los hitos fijos y recurrentes se generan al registrar el contrato.
 -- Los trámites eventuales (ampliación, adicional, cambio de personal, etc.)
@@ -29,7 +31,7 @@ create table if not exists tramites (
   contratista text,                       -- legado; el ejecutor vigente va en `ejecutor`
   ejecutor jsonb not null default '{"tipo":"empresa"}'::jsonb,  -- {tipo:'empresa'} o {tipo:'consorcio', nombre, ruc, representante, integrantes:[{razonSocial, ruc, participacion}]}
   ruc text,
-  tipo_objeto text not null default 'Obra' check (tipo_objeto in ('Obra','Consultoría de obra')),
+  tipo_objeto text not null default 'Obra' check (tipo_objeto in ('Obra','Consultoría de obra','Servicio','Bien')),
   area text,
   moneda text default 'PEN',
   monto numeric,
@@ -113,7 +115,7 @@ create table if not exists historial (
   item_id bigint,
   usuario text,
   usuario_id bigint,
-  objeto text,                              -- hito, contrato, catalogo, permisos, usuarios, empresa, movimiento, cargo
+  objeto text,                              -- hito, contrato, catalogo, permisos, usuarios, empresa, tramite, movimiento
   objeto_id text,
   accion text not null,
   detalle text,
@@ -153,31 +155,24 @@ create table if not exists usuario_contratos (
   primary key (usuario_id, tramite_id)
 );
 
--- Cargos de mesa de partes: el sello de recepción de cada documento presentado.
-create table if not exists cargos (
+-- Trámite: flujo completo de un documento hasta el cumplimiento de un hito.
+-- No es un hito y no tiene sección "cargos": cada avance es un movimiento.
+create table if not exists procedimientos (
   id bigserial primary key,
-  fecha date not null,
-  hora text,
-  entidad text not null,
-  oficina text,
-  numero_registro text not null,
-  asunto text not null,
-  tipo_documento text not null default 'carta' check (tipo_documento in ('carta','oficio','solicitud','informe','otro')),
-  numero_documento text,
-  emisor text not null default 'empresa',   -- 'empresa' o el id del contrato en consorcio
-  emisor_nombre text,
-  presentado_por text,
-  tramite_id bigint references tramites(id) on delete set null,
-  item_id bigint references tramite_items(id) on delete set null,
-  hito_codigo text,
-  paso_clave text,
-  movimiento_id bigint,
-  archivo_cargo_path text,
-  registrado_por bigint references usuarios(id),
-  registrado timestamptz not null default now(),
-  anulado boolean not null default false,
-  anulado_por text,
-  motivo_anulacion text
+  numero text not null,
+  tramite_id bigint not null references tramites(id) on delete cascade,
+  item_id bigint not null references tramite_items(id) on delete cascade,
+  nombre text not null,
+  destino text not null check (destino in ('entidad','supervision','interno')),
+  dependencia_origen text,
+  dependencia_destino text,
+  responsable text,
+  prioridad text not null default 'Normal' check (prioridad in ('Normal','Urgente','Muy urgente')),
+  estado text not null default 'Borrador' check (estado in ('Borrador','Visado','Por despacho','Enviado','Recibido','En atención','Atendido','Archivado')),
+  fecha_inicio date,
+  fecha_objetivo date,
+  descripcion text,
+  creado timestamptz not null default now()
 );
 
 -- Movimientos de un hito con pasos: hechos con fecha y documento. Nunca se borran:
@@ -193,7 +188,12 @@ create table if not exists movimientos (
   hora text,
   numero_documento text,
   asiento_co text,
-  cargo_id bigint references cargos(id) on delete set null,
+  procedimiento_id bigint references procedimientos(id) on delete cascade,
+  numero_registro text,
+  oficina text,
+  tipo_documento text not null default 'carta',
+  dependencia_origen text,
+  dependencia_destino text,
   archivo_path text,
   archivo_nombre text,
   nota text,
@@ -204,11 +204,8 @@ create table if not exists movimientos (
   anulado_por text,
   motivo_anulacion text
 );
-alter table cargos add constraint cargos_movimiento_fk foreign key (movimiento_id) references movimientos(id) on delete set null;
-
 create index if not exists idx_movimientos_item on movimientos(item_id);
-create index if not exists idx_cargos_fecha on cargos(fecha);
-create index if not exists idx_cargos_tramite on cargos(tramite_id);
+create index if not exists idx_movimientos_procedimiento on movimientos(procedimiento_id);
 
 create index if not exists idx_tramite_items_tramite on tramite_items(tramite_id);
 create index if not exists idx_tramite_items_etapa on tramite_items(tramite_id, etapa_codigo, seccion_codigo);
@@ -221,8 +218,54 @@ alter table tramites enable row level security;
 alter table tramite_items enable row level security;
 alter table adjuntos enable row level security;
 alter table movimientos enable row level security;
-alter table cargos enable row level security;
+alter table procedimientos enable row level security;
 -- (Añadir políticas reales según el mapeo de roles de Supabase Auth.)
 
--- Bucket de archivos: crear en Supabase Storage con el nombre "adjuntos".
+-- ---------------------------------------------------------------------------
+-- Puente de sincronización usado por el despliegue en Vercel.
+-- La app mantiene su modelo local y envía un snapshot JSONB a esta tabla.
+-- El service role de Supabase es el único que la lee/escribe desde /api/state.
+-- ---------------------------------------------------------------------------
+create table if not exists app_states (
+  id text primary key,
+  data jsonb not null,
+  updated_at timestamptz not null default now()
+);
+
+alter table app_states enable row level security;
+
+-- Política para el service role (las funciones de Vercel usan esta clave).
+do $$
+begin
+  if not exists (select 1 from pg_policies where schemaname='public' and tablename='app_states' and policyname='app_states_service_full') then
+    create policy app_states_service_full on app_states
+      for all to service_role using (true) with check (true);
+  end if;
+end $$;
+
+-- Bucket de archivos: se crea en Supabase Storage con el nombre "adjuntos".
 -- Ruta sugerida: tramites/{tramite_id}/items/{item_id}/{archivo_id}-{nombre}
+insert into storage.buckets (id, name, public)
+values ('adjuntos', 'adjuntos', false)
+on conflict (id) do nothing;
+
+-- Permisos de Storage para el service role (las APIs de Vercel).
+do $$
+begin
+  if not exists (select 1 from storage.policies where name='adjuntos_service_select') then
+    create policy adjuntos_service_select on storage.objects
+      for select to service_role using (bucket_id = 'adjuntos');
+  end if;
+  if not exists (select 1 from storage.policies where name='adjuntos_service_insert') then
+    create policy adjuntos_service_insert on storage.objects
+      for insert to service_role with check (bucket_id = 'adjuntos');
+  end if;
+  if not exists (select 1 from storage.policies where name='adjuntos_service_update') then
+    create policy adjuntos_service_update on storage.objects
+      for update to service_role using (bucket_id = 'adjuntos') with check (bucket_id = 'adjuntos');
+  end if;
+  if not exists (select 1 from storage.policies where name='adjuntos_service_delete') then
+    create policy adjuntos_service_delete on storage.objects
+      for delete to service_role using (bucket_id = 'adjuntos');
+  end if;
+end $$;

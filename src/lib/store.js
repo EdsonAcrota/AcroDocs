@@ -22,11 +22,15 @@ import {
   AMBITOS,
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
+import { CLOUD_SYNC, pushCloudState } from "./cloud.js";
 import { calcularFlujo, instanciarPasos } from "./flujo.js";
 import { cargosVisibles, TIPOS_DOCUMENTO } from "./cargos.js";
 import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
 import { tienePermiso, veContrato, PERMISOS, ROLES } from "./permisos.js";
-import { migrarV6aV7, fundirCatalogo, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia } from "./migracion.js";
+import {
+  migrarV6aV7, fundirCatalogo, fusionarNovedadesCatalogo, aplicarPerfeccionamientoBases,
+  actualizarPerfeccionamientoItems, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia,
+} from "./migracion.js";
 
 const KEY = "acrodocs_demo_v7";
 // Claves de versiones anteriores que se migran al leer. Hoy solo v6; la lógica
@@ -35,6 +39,13 @@ const KEYS_ANTERIORES = ["acrodocs_demo_v6"];
 // Copia del texto crudo de v6, guardada antes de borrar la clave vieja
 // (§5.8: respaldo previo a la migración). Configuración la ofrece para descargar.
 const RESPALDO_V6 = "acrodocs_respaldo_v6";
+
+// Estados normalizados del flujo interno (Buenas prácticas §3.3) y prioridades
+// de bandeja. Se usan en los trámites y en sus movimientos.
+export const ESTADOS_TRAMITE = [
+  "Borrador", "Visado", "Por despacho", "Enviado", "Recibido", "En atención", "Atendido", "Archivado",
+];
+export const PRIORIDADES_TRAMITE = ["Normal", "Urgente", "Muy urgente"];
 
 const uid = () =>
   (typeof crypto !== "undefined" && crypto.randomUUID)
@@ -172,6 +183,7 @@ const read = () => {
         if (!data.empresa || typeof data.empresa !== "object") data.empresa = empresaVacia();
         if (!Array.isArray(data.movimientos)) data.movimientos = [];
         if (!Array.isArray(data.cargos)) data.cargos = [];
+        if (!Array.isArray(data.procedimientos)) data.procedimientos = [];
         // Un v7 guardado antes del catálogo almacenado: se funde una vez y se
         // guarda enseguida, para que los ids del catálogo no cambien entre lecturas.
         let guardar = false;
@@ -184,6 +196,9 @@ const read = () => {
         // Un catálogo guardado antes de que los hitos llevaran `codigo`: se les
         // da el código que ya tenían por regla, una sola vez.
         if (asignarCodigos(data.catalogo)) guardar = true;
+        if (fusionarNovedadesCatalogo(data.catalogo)) guardar = true;
+        if (aplicarPerfeccionamientoBases(data.catalogo)) guardar = true;
+        if (actualizarPerfeccionamientoItems(data)) guardar = true;
         if (guardar) {
           try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
         }
@@ -209,9 +224,15 @@ const read = () => {
   return data;
 };
 
+let colaSync = null;
+
 const write = (data) => {
   memoria = data;
   try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
+  if (CLOUD_SYNC) {
+    if (colaSync) clearTimeout(colaSync);
+    colaSync = setTimeout(() => pushCloudState(data).catch(() => {}), 800);
+  }
   return data;
 };
 
@@ -713,6 +734,14 @@ export const deleteTramite = (id) => {
 export const listItems = (tramiteId) =>
   ordenarTareas(read().items.filter((i) => i.tramite_id === tramiteId));
 
+export const listHitos = (tramiteId) =>
+  listItems(tramiteId).filter((i) => i.tipo !== "tramite");
+
+export const listTramitesInternos = (tramiteId, hitoId = null) =>
+  listItems(tramiteId).filter(
+    (i) => i.tipo === "tramite" && (!hitoId || i.hito_id === hitoId)
+  );
+
 export const getItem = (id) => read().items.find((i) => i.id === id) || null;
 
 export const updateItem = (id, cambios) => {
@@ -726,6 +755,19 @@ export const updateItem = (id, cambios) => {
   data.items = data.items.map((i) => (i.id === id ? { ...i, ...cambios } : i));
   const item = data.items.find((i) => i.id === id) || null;
   if (item?.pasos?.length && cambios && (cambios.estado === "Pendiente" || cambios.pasos !== undefined)) sincronizarItemEn(data, item);
+  // El trámite es el flujo completo hasta el cumplimiento del hito: al cerrar
+  // el hito, sus trámites se archivan automáticamente (§4 del documento de buenas prácticas).
+  if (item?.estado === "Completado") {
+    for (const proc of data.procedimientos || []) {
+      if (proc.hitoId === id && proc.estado !== "Archivado") {
+        proc.estado = "Archivado";
+        anotarHistorial(data, {
+          accion: "archivar", objeto: "tramite", objetoId: proc.id, tramiteId: proc.tramiteId,
+          detalle: `Trámite «${proc.nombre}» archivado al cumplirse el hito ${item.codigo}.`,
+        });
+      }
+    }
+  }
   write(data);
   return item;
 };
@@ -872,13 +914,21 @@ export const eliminarDocumento = (itemId, docId) => {
   return true;
 };
 
-export const addTareaEventual = (tramiteId, clave) => {
+export const addTareaEventual = (tramiteId, clave, hitoId = null) => {
   const data = read();
   const tramite = data.tramites.find((t) => t.id === tramiteId);
   if (!tramite) return null;
   const existentes = data.items.filter((i) => i.tramite_id === tramiteId);
   const tarea = crearTareaEventualCatalogo(tramite, clave, existentes, data.catalogo, data.feriados);
   if (!tarea) return null;
+  if (hitoId) {
+    const hito = data.items.find((i) => i.id === hitoId && i.tramite_id === tramiteId);
+    if (hito) {
+      tarea.hito_id = hito.id;
+      tarea.hito_codigo = hito.codigo;
+      tarea.hito_nombre = hito.nombre;
+    }
+  }
   data.items.push(tarea);
   write(data);
   return tarea;
@@ -1183,6 +1233,174 @@ export const eliminarCatalogoHito = (id) => {
   if (!u || !u.lista) return false;
   u.lista.splice(u.lista.indexOf(u.plantilla), 1);
   anotarCatalogo(data, "eliminar", id, `«${u.plantilla.nombre}» quitado del catálogo de ${tipoDeAmbito(u.ambito)}.`);
+  write(data);
+  return true;
+};
+
+// ---------- Trámites (procedimientos) ----------
+// Un trámite NO es un hito: es el procedimiento que sigue el contratista para
+// cumplir un hito. Guarda movimientos, cargos y documentos internos propios.
+export const listProcedimientos = (tramiteId = null, hitoId = null) => {
+  const data = read();
+  const usuario = usuarioActual(data);
+  return (data.procedimientos || [])
+    .filter((p) => !tramiteId || p.tramiteId === tramiteId)
+    .filter((p) => !hitoId || p.hitoId === hitoId)
+    .filter((p) => veContrato(data.permisosRoles, usuario, p.tramiteId))
+    .sort((a, b) => String(b.fechaInicio || "").localeCompare(String(a.fechaInicio || "")));
+};
+
+export const getProcedimiento = (id) => {
+  const data = read();
+  return (data.procedimientos || []).find((p) => p.id === id) || null;
+};
+
+export const crearProcedimiento = (datos = {}) => {
+  const data = read();
+  const tramiteId = datos.tramiteId || null;
+  exigirEn(data, "agregar", tramiteId || undefined);
+  const contrato = data.tramites.find((t) => t.id === tramiteId);
+  if (!contrato) throw new Error("El contrato no existe.");
+  const hito = data.items.find((i) => i.id === datos.hitoId && i.tramite_id === tramiteId);
+  if (!hito) throw new Error("Selecciona el hito que debe cumplir el trámite.");
+  const nombre = String(datos.nombre || "").trim() || `Trámite para ${hito.codigo} ${hito.nombre}`;
+  const destino = ["entidad", "supervision", "interno"].includes(datos.destino) ? datos.destino : "entidad";
+  const anio = (datos.fechaInicio || hoy()).slice(0, 4);
+  const correlativo = (data.procedimientos || []).filter((p) => p.tramiteId === tramiteId).length + 1;
+  const usuario = usuarioActual(data);
+  const procedimiento = {
+    id: uid(),
+    numero: `TR-${anio}-${String(correlativo).padStart(4, "0")}`,
+    tramiteId,
+    hitoId: hito.id,
+    hitoCodigo: hito.codigo,
+    hitoNombre: hito.nombre,
+    nombre,
+    destino,
+    dependenciaOrigen: "Contratista",
+    dependenciaDestino: destino === "entidad" ? (contrato.entidad || "Entidad") : destino === "supervision" ? "Supervisión de obra" : "Interno",
+    responsable: usuario?.nombre || "",
+    prioridad: PRIORIDADES_TRAMITE.includes(datos.prioridad) ? datos.prioridad : "Normal",
+    estado: ESTADOS_TRAMITE.includes(datos.estado) ? datos.estado : "Borrador",
+    fechaInicio: datos.fechaInicio || hoy(),
+    fechaObjetivo: hito.fecha_limite || "",
+    descripcion: String(datos.descripcion || "").trim(),
+    documentos: [],
+    movimientos: [],
+    creado: new Date().toISOString(),
+  };
+  if (!Array.isArray(data.procedimientos)) data.procedimientos = [];
+  data.procedimientos.push(procedimiento);
+  anotarHistorial(data, {
+    accion: "crear", objeto: "tramite", objetoId: procedimiento.id, tramiteId,
+    detalle: `Trámite «${nombre}» para el hito ${hito.codigo}.`,
+  });
+  write(data);
+  return clonar(procedimiento);
+};
+
+export const actualizarProcedimiento = (id, cambios = {}) => {
+  const data = read();
+  const proc = (data.procedimientos || []).find((p) => p.id === id);
+  if (!proc) throw new Error("El trámite no existe.");
+  exigirEn(data, "registrar", proc.tramiteId);
+  const permitidos = ["nombre", "destino", "estado", "prioridad", "descripcion", "fechaInicio", "fechaObjetivo"];
+  for (const clave of permitidos) {
+    if (cambios[clave] !== undefined) proc[clave] = cambios[clave];
+  }
+  anotarHistorial(data, {
+    accion: "editar", objeto: "tramite", objetoId: id, tramiteId: proc.tramiteId,
+    detalle: `Se actualizó el trámite «${proc.nombre}».`,
+  });
+  write(data);
+  return clonar(proc);
+};
+
+export const eliminarProcedimiento = (id) => {
+  const data = read();
+  const proc = (data.procedimientos || []).find((p) => p.id === id);
+  if (!proc) throw new Error("El trámite no existe.");
+  exigirEn(data, "borrar_hito", proc.tramiteId);
+  data.procedimientos = data.procedimientos.filter((p) => p.id !== id);
+  for (const cargo of data.cargos || []) {
+    if (cargo.procedimientoId === id) cargo.procedimientoId = null;
+  }
+  for (const doc of proc.documentos || []) {
+    if (doc.archivoId) eliminarArchivo(doc.archivoId).catch(() => {});
+  }
+  anotarHistorial(data, {
+    accion: "eliminar", objeto: "tramite", objetoId: id, tramiteId: proc.tramiteId,
+    detalle: `Se eliminó el trámite «${proc.nombre}».`,
+  });
+  write(data);
+  return true;
+};
+
+export const agregarMovimientoProcedimiento = (id, datos = {}) => {
+  const data = read();
+  const proc = (data.procedimientos || []).find((p) => p.id === id);
+  if (!proc) throw new Error("El trámite no existe.");
+  exigirEn(data, "registrar", proc.tramiteId);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(datos.fecha || ""))) throw new Error("Indica la fecha del movimiento.");
+  const usuario = usuarioActual(data);
+  const movimiento = {
+    id: uid(),
+    fecha: datos.fecha,
+    hora: datos.hora || "",
+    usuario: usuario?.nombre || "Sistema",
+    accion: String(datos.tipo || "otro"),
+    tipo: String(datos.tipo || "otro"),
+    dependenciaOrigen: proc.dependenciaOrigen || "Contratista",
+    dependenciaDestino: proc.dependenciaDestino || "Entidad",
+    numeroDocumento: String(datos.numeroDocumento || "").trim(),
+    numeroRegistro: String(datos.numeroRegistro || "").trim(),
+    oficina: String(datos.oficina || "").trim(),
+    tipoDocumento: String(datos.tipoDocumento || "carta"),
+    nota: String(datos.nota || "").trim(),
+    archivoId: datos.archivoId || null,
+    archivoNombre: datos.archivoNombre || "",
+    registrado: new Date().toISOString(),
+  };
+  if (!Array.isArray(proc.movimientos)) proc.movimientos = [];
+  proc.movimientos.push(movimiento);
+  if (datos.estado && ESTADOS_TRAMITE.includes(datos.estado)) proc.estado = datos.estado;
+  anotarHistorial(data, {
+    accion: "registrar", objeto: "tramite", objetoId: id, tramiteId: proc.tramiteId,
+    detalle: `Movimiento «${movimiento.tipo}» en el trámite «${proc.nombre}».`,
+  });
+  write(data);
+  return clonar(movimiento);
+};
+
+export const listarCargosProcedimiento = (id) => {
+  const data = read();
+  return (data.cargos || []).filter((c) => c.procedimientoId === id);
+};
+
+export const agregarDocumentoProcedimiento = (id, meta = {}) => {
+  const data = read();
+  const proc = (data.procedimientos || []).find((p) => p.id === id);
+  if (!proc) throw new Error("El trámite no existe.");
+  exigirEn(data, "subir", proc.tramiteId);
+  if (!Array.isArray(proc.documentos)) proc.documentos = [];
+  proc.documentos.push({ id: uid(), ...meta, fecha: meta.fecha || hoy() });
+  anotarHistorial(data, {
+    accion: "subir", objeto: "tramite", objetoId: id, tramiteId: proc.tramiteId,
+    detalle: `Documento interno «${meta.nombre || "sin nombre"}» en el trámite «${proc.nombre}».`,
+  });
+  write(data);
+  return clonar(proc.documentos[proc.documentos.length - 1]);
+};
+
+export const eliminarDocumentoProcedimiento = (id, docId) => {
+  const data = read();
+  const proc = (data.procedimientos || []).find((p) => p.id === id);
+  if (!proc) throw new Error("El trámite no existe.");
+  exigirEn(data, "borrar_doc", proc.tramiteId);
+  const doc = (proc.documentos || []).find((d) => d.id === docId);
+  if (!doc) return false;
+  if (doc.archivoId) eliminarArchivo(doc.archivoId).catch(() => {});
+  proc.documentos = proc.documentos.filter((d) => d.id !== docId);
   write(data);
   return true;
 };
@@ -1755,8 +1973,15 @@ export const registrarCargo = (datos = {}) => {
 
   const tramite = tramiteId ? data.tramites.find((t) => t.id === tramiteId) : null;
   if (tramiteId && !tramite) throw new Error("El contrato no existe.");
-  const item = datos.itemId ? data.items.find((i) => i.id === datos.itemId) : null;
-  if (datos.itemId && (!item || item.tramite_id !== tramiteId)) throw new Error("El hito no pertenece al contrato elegido.");
+  const procedimiento = datos.procedimientoId
+    ? (data.procedimientos || []).find((p) => p.id === datos.procedimientoId)
+    : null;
+  if (datos.procedimientoId && (!procedimiento || procedimiento.tramiteId !== tramiteId)) {
+    throw new Error("El trámite no pertenece al contrato elegido.");
+  }
+  const itemId = datos.itemId || procedimiento?.hitoId || null;
+  const item = itemId ? data.items.find((i) => i.id === itemId) : null;
+  if (itemId && (!item || item.tramite_id !== tramiteId)) throw new Error("El hito no pertenece al contrato elegido.");
 
   // Emisor: la empresa o el consorcio de un contrato.
   let emisor = "empresa";
@@ -1783,6 +2008,7 @@ export const registrarCargo = (datos = {}) => {
     emisorNombre,
     presentadoPor: String(datos.presentadoPor || "").trim(),
     tramiteId,
+    procedimientoId: procedimiento?.id || null,
     itemId: item?.id || null,
     hitoCodigo: item ? item.codigo : "",
     pasoClave: datos.pasoClave || null,

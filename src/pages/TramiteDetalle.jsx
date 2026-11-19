@@ -6,6 +6,9 @@ import {
   addTareaEventual, listarEventuales, listarHitosOpcionales, addHitoOpcional,
   agregarMesSCTR, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
   actualizarCatalogoPorClave, agregarCatalogoHito, moverItem, hoyISO,
+  listProcedimientos, getProcedimiento, crearProcedimiento, actualizarProcedimiento,
+  eliminarProcedimiento, agregarMovimientoProcedimiento,
+  ESTADOS_TRAMITE, PRIORIDADES_TRAMITE,
   nombreEjecutor, validarEjecutor,
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
@@ -16,11 +19,20 @@ import {
 import HistorialLista from "../components/HistorialLista.jsx";
 import EjecutorForm from "../components/EjecutorForm.jsx";
 import LineaTiempo from "../components/LineaTiempo.jsx";
-import CargosPanel from "../components/CargosPanel.jsx";
+import SubirArchivo, { TomarFoto } from "../components/SubirArchivo.jsx";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 const ESTADOS = ["Pendiente", "En revisión", "Completado", "Observado", "No aplica"];
+
+const etiquetaTipoHito = (tipo) => ({
+  fijo: "Hito de catálogo",
+  recurrente: "Hito de catálogo",
+  opcional: "Hito opcional",
+  eventual: "Hito eventual",
+  propio: "Hito propio",
+  tramite: "Trámite",
+}[tipo] || "Hito");
 
 const nombrePorEtiqueta = (etiqueta, nombreOriginal = "") => {
   const extension = nombreOriginal.includes(".") ? `.${nombreOriginal.split(".").pop()}` : "";
@@ -99,6 +111,13 @@ export default function TramiteDetalle() {
   const [tramite, setTramite] = useState(getTramite(id));
   const [errorTramite, setErrorTramite] = useState("");
   const [items, setItems] = useState(listItems(id));
+  const [procedimientos, setProcedimientos] = useState(listProcedimientos(id));
+  const [procedimientoId, setProcedimientoId] = useState(null);
+  const [modalProcedimiento, setModalProcedimiento] = useState(false);
+  const [procForm, setProcForm] = useState({});
+  const [movForm, setMovForm] = useState({});
+  const [procArchivo, setProcArchivo] = useState(null);
+  const [errorProc, setErrorProc] = useState("");
   const [tab, setTab] = useState("expediente");
   const [buscar, setBuscar] = useState("");
   const [filtroEtapa, setFiltroEtapa] = useState("Todas");
@@ -110,6 +129,7 @@ export default function TramiteDetalle() {
   const [errorArchivo, setErrorArchivo] = useState("");
   const [modalEventual, setModalEventual] = useState(false);
   const [eventualSel, setEventualSel] = useState("");
+  const [eventualHitoId, setEventualHitoId] = useState("");
   const [modalHito, setModalHito] = useState(false);
   const [nuevoHito, setNuevoHito] = useState({ nombre: "", etapa: "Hitos propios" });
   const [guardarHitoEnCatalogo, setGuardarHitoEnCatalogo] = useState(false);
@@ -130,6 +150,26 @@ export default function TramiteDetalle() {
   const tarea = useMemo(
     () => items.find((i) => i.id === tareaId) || null,
     [items, tareaId]
+  );
+
+  const tramitesVinculados = useMemo(
+    () => (tarea ? items.filter((i) => i.hito_id === tarea.id) : []),
+    [items, tarea]
+  );
+
+  const hitoPadre = useMemo(
+    () => (tarea?.hito_id ? items.find((i) => i.id === tarea.hito_id) || null : null),
+    [items, tarea]
+  );
+
+  const proc = useMemo(
+    () => procedimientos.find((p) => p.id === procedimientoId) || null,
+    [procedimientos, procedimientoId]
+  );
+
+  const procedimientosDelHito = useMemo(
+    () => (tarea ? procedimientos.filter((p) => p.hitoId === tarea.id) : []),
+    [procedimientos, tarea]
   );
 
   const resumen = useMemo(() => {
@@ -282,7 +322,10 @@ export default function TramiteDetalle() {
   const integrantesEjecutor = ejecutorConsorcio ? tramite.ejecutor.integrantes || [] : [];
   const avisosEjecutor = validarEjecutor(tramite.ejecutor);
 
-  const recargar = () => setItems(listItems(id));
+  const recargar = () => {
+    setItems(listItems(id));
+    setProcedimientos(listProcedimientos(id));
+  };
 
   const cambiarItem = (cambios) => {
     if (!tarea) return;
@@ -312,13 +355,73 @@ export default function TramiteDetalle() {
     setEditando(false);
   };
 
+  const abrirNuevoProcedimiento = (hitoId = "") => {
+    setErrorProc("");
+    setProcForm({ nombre: "", hitoId, destino: "entidad", descripcion: "" });
+    setModalProcedimiento(true);
+  };
+
+  const guardarProcedimiento = (e) => {
+    e.preventDefault();
+    if (!permiso.agregar) return;
+    try {
+      const creado = crearProcedimiento({ ...procForm, tramiteId: id });
+      recargar();
+      setModalProcedimiento(false);
+      setProcedimientoId(creado.id);
+    } catch (err) {
+      setErrorProc(err?.message || "No se pudo crear el trámite.");
+    }
+  };
+
+  const abrirProcedimiento = (proc) => {
+    setErrorProc("");
+    setProcedimientoId(proc.id);
+  };
+
+  const borrarProcedimiento = () => {
+    if (!proc || !permiso.borrar_hito) return;
+    if (!window.confirm(`¿Eliminar el trámite “${proc.nombre}”? Sus cargos quedan en mesa de partes pero se desvinculan.`)) return;
+    try {
+      eliminarProcedimiento(proc.id);
+      setProcedimientoId(null);
+      recargar();
+    } catch (err) {
+      setErrorProc(err?.message || "No se pudo eliminar el trámite.");
+    }
+  };
+
+  const guardarMovimientoProc = async (e) => {
+    e.preventDefault();
+    if (!proc) return;
+    try {
+      let subido = null;
+      if (procArchivo) {
+        subido = await guardarArchivo(procArchivo, {
+          tramiteId: id, tareaId: proc.hitoId, tipoDoc: "Movimiento de trámite", nombre: procArchivo.name,
+        });
+      }
+      agregarMovimientoProcedimiento(proc.id, {
+        ...movForm,
+        archivoId: subido?.archivoId || null,
+        archivoNombre: subido?.nombre || "",
+      });
+      setMovForm({});
+      setProcArchivo(null);
+      recargar();
+    } catch (err) {
+      setErrorProc(err?.message || "No se pudo registrar el movimiento.");
+    }
+  };
+
   const crearEventual = (e) => {
     e.preventDefault();
     if (!permiso.agregar || !eventualSel) return;
-    const nueva = addTareaEventual(id, eventualSel);
+    const nueva = addTareaEventual(id, eventualSel, eventualHitoId || null);
     recargar();
     setModalEventual(false);
     setEventualSel("");
+    setEventualHitoId("");
     if (nueva) abrirTarea(nueva);
   };
 
@@ -795,7 +898,7 @@ export default function TramiteDetalle() {
           {permiso.descargar && <button className="btn" onClick={descargarExpediente}>Descargar expediente</button>}
           <button className="btn" onClick={() => window.print()}>Imprimir</button>
           {permiso.agregar && (
-            <button className="btn primario" onClick={() => { setEventualSel(""); setModalEventual(true); }}>+ Nuevo trámite</button>
+            <button className="btn primario" onClick={() => abrirNuevoProcedimiento()}>+ Nuevo trámite</button>
           )}
           {permiso.eliminar && (
             <button className="btn peligro" onClick={eliminarContrato}>Eliminar contrato</button>
@@ -852,11 +955,12 @@ export default function TramiteDetalle() {
           Expediente <span className="tab-num">{items.length}</span>
         </button>
         <button className={tab === "resumen" ? "activo" : ""} onClick={() => setTab("resumen")}>Resumen</button>
-        <button className={tab === "cargos" ? "activo" : ""} onClick={() => setTab("cargos")}>Cargos</button>
+        <button className={tab === "tramites" ? "activo" : ""} onClick={() => setTab("tramites")}>
+          Trámites <span className="tab-num">{procedimientos.length}</span>
+        </button>
         <button className={tab === "historial" ? "activo" : ""} onClick={() => setTab("historial")}>Historial</button>
       </div>
 
-      {tab === "cargos" && <CargosPanel tramiteId={id} />}
 
       {tab === "historial" && (
         <div className="tarjeta">
@@ -892,13 +996,13 @@ export default function TramiteDetalle() {
           </div>
 
           <div className="tarjeta">
-            <div className="tarjeta-cab"><h3>Trámites eventuales</h3>{permiso.agregar && <button className="btn mini" onClick={() => setModalEventual(true)}>+ Nuevo</button>}</div>
+            <div className="tarjeta-cab"><h3>Hitos eventuales</h3>{permiso.agregar && <button className="btn mini" onClick={() => setModalEventual(true)}>+ Nuevo</button>}</div>
             <div className="cuerpo">
-              {eventuales.length === 0 && <div className="vacio">Sin trámites eventuales. Se crean solo cuando ocurre el hecho (cambio de personal, ampliación, adicional, etc.).</div>}
+              {eventuales.length === 0 && <div className="vacio">Sin hitos eventuales. Se crean solo cuando ocurre el hecho (cambio de personal, ampliación, adicional, etc.).</div>}
               {eventuales.map((t) => (
                 <button key={t.id} className="fila-tarea-boton" onClick={() => abrirTarea(t)}>
                   <div>
-                    <div className="codigo">{t.codigo} · {t.tipo === "eventual" ? "Trámite eventual" : "Hito propio"}</div>
+                    <div className="codigo">{t.codigo} · {etiquetaTipoHito(t.tipo)}</div>
                     <strong>{t.nombre}</strong>
                     <div className="ref">{(t.documentos || []).length}/{t.docsRequeridos?.length || 0} documentos · {t.estado}</div>
                   </div>
@@ -947,6 +1051,37 @@ export default function TramiteDetalle() {
         </div>
       )}
 
+      {tab === "tramites" && (
+        <div className="tarjeta">
+          <div className="tarjeta-cab">
+            <div>
+              <h3>Trámites del contrato</h3>
+              <span className="ref">Procedimientos del contratista para cumplir un hito. Aquí se guardan movimientos, cargos y documentos internos.</span>
+            </div>
+            {permiso.agregar && <button className="btn mini primario" onClick={() => abrirNuevoProcedimiento()}>+ Nuevo trámite</button>}
+          </div>
+          <div className="cuerpo">
+            {procedimientos.length === 0 && <div className="vacio">Todavía no hay trámites. Crea uno para seguir un procedimiento hasta el documento objetivo de un hito.</div>}
+            {procedimientos.map((p) => (
+              <div className="catalogo-hito-fila" key={p.id}>
+                <div>
+                  <strong>{p.nombre}</strong>
+                  <span className="ref">
+                    Hito {p.hitoCodigo} · {p.hitoNombre} · {p.destino === "entidad" ? "Entidad" : p.destino === "supervision" ? "Supervisión" : "Interno"}
+                  </span>
+                  <span className="ref">
+                    {p.estado} · {p.movimientos?.length || 0} movimiento(s) · vence {fecha(p.fechaObjetivo)}
+                  </span>
+                </div>
+                <div className="chips">
+                  <button type="button" className="btn mini" onClick={() => abrirProcedimiento(p)}>Abrir trámite</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
       {tab === "expediente" && (
         <div>
           <div className="tarjeta">
@@ -978,6 +1113,7 @@ export default function TramiteDetalle() {
                 <option value="Completos">Requisitos completos</option>
               </select>
               <span className="contador">{itemsFiltrados.length} de {items.length}</span>
+              {permiso.agregar && <button className="btn mini" onClick={() => { setEventualSel(""); setModalEventual(true); }}>+ Hito eventual</button>}
               {permiso.agregar && <button className="btn mini" onClick={() => setModalOpcional(true)}>+ Hito opcional</button>}
               {permiso.agregar && <button className="btn mini" onClick={() => setModalHito(true)}>+ Hito propio</button>}
             </div>
@@ -1039,9 +1175,13 @@ export default function TramiteDetalle() {
                             <div className="tarea-cuerpo">
                               <div className="tarea-titulo">
                                 <strong>{t.nombre}</strong>
-                                {t.tipo === "eventual" && <span className="badge violeta">Eventual</span>}
+                                {t.tipo === "eventual" && <span className="badge violeta">Hito eventual</span>}
+                                {t.tipo === "opcional" && <span className="badge gris">Hito opcional</span>}
                                 {t.tipo === "recurrente" && <span className="badge azul">{t.periodo || "Recurrente"}</span>}
                                 {t.tipo === "propio" && <span className="badge gris">Propio</span>}
+                                {procedimientos.filter((p) => p.hitoId === t.id).length > 0 && (
+                                  <span className="badge violeta">{procedimientos.filter((p) => p.hitoId === t.id).length} trámite(s)</span>
+                                )}
                                 {silencioProducido(t) && <span className="badge rojo">Silencio positivo</span>}
                                 {t.plazoDias > 0 && <span className="badge gris">{t.plazoDias} días {t.plazoHabiles ? "hábiles" : "calendario"}</span>}
                               </div>
@@ -1104,9 +1244,11 @@ export default function TramiteDetalle() {
                 <h3>{tarea.nombre}</h3>
                 <div className="chips">
                   <span className={`badge ${claseEstado(tarea.estado)}`}>{tarea.estado}</span>
-                  {tarea.tipo === "eventual" && <span className="badge violeta">Trámite eventual</span>}
-                  {tarea.tipo === "recurrente" && <span className="badge azul">{tarea.periodo || "Recurrente"}</span>}
+                  {(tarea.tipo === "fijo" || tarea.tipo === "recurrente") && <span className="badge azul">Hito de catálogo</span>}
+                  {tarea.tipo === "opcional" && <span className="badge gris">Hito opcional</span>}
+                  {tarea.tipo === "eventual" && <span className="badge violeta">Hito eventual</span>}
                   {tarea.tipo === "propio" && <span className="badge gris">Hito propio</span>}
+                  {hitoPadre && <button type="button" className="btn mini" onClick={() => abrirTarea(hitoPadre)}>← Hito {hitoPadre.codigo}</button>}
                   {silencioProducido(tarea) && <span className="badge rojo">Silencio positivo</span>}
                   {tarea.fecha_limite && (
                     <span className={`badge ${estadoVencimiento(tarea) === "vencido" ? "rojo" : estadoVencimiento(tarea) === "por-vencer" ? "ambar" : "gris"}`}>
@@ -1120,6 +1262,11 @@ export default function TramiteDetalle() {
 
             <div className="modal-cuerpo modal-tarea-cuerpo">
               {tarea.nota && <div className="nota-info">{tarea.nota}</div>}
+              {hitoPadre && (
+                <div className="nota-info">
+                  Trámite del hito <strong>{hitoPadre.codigo} · {hitoPadre.nombre}</strong>. Reúne los documentos internos y los pasos ante la supervisión o la entidad hasta emitir el documento objetivo.
+                </div>
+              )}
               {sinEdicion && (
                 <div className="nota-info">
                   Tu rol solo permite consultar los hitos{permiso.descargar ? " y descargar archivos" : ""}; no puedes modificar el expediente.
@@ -1154,6 +1301,35 @@ export default function TramiteDetalle() {
               </div>
 
               <LineaTiempo item={tarea} permiso={permiso} onCambio={recargar} />
+
+              <div className="catalogo-hito">
+                <div className="catalogo-hito-cab">
+                  <div>
+                    <h4>Trámites vinculados a este hito</h4>
+                    <span className="ref">Movimientos del flujo completo hasta el documento objetivo.</span>
+                  </div>
+                  {permiso.agregar && (
+                    <button
+                      type="button"
+                      className="btn mini"
+                      onClick={() => abrirNuevoProcedimiento(tarea.id)}
+                    >
+                      + Iniciar trámite
+                    </button>
+                  )}
+                </div>
+                {procedimientosDelHito.length === 0 ? (
+                  <div className="catalogo-hito-datos">Este hito todavía no tiene trámites. Un trámite es el procedimiento del contratista para lograr su documento objetivo.</div>
+                ) : (
+                  <div className="catalogo-hito-datos">
+                    {procedimientosDelHito.map((p) => (
+                      <button key={p.id} type="button" className="btn mini" onClick={() => abrirProcedimiento(p)}>
+                        {p.nombre} →
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
 
               <div className="catalogo-hito">
                 <div className="catalogo-hito-cab">
@@ -1264,15 +1440,11 @@ export default function TramiteDetalle() {
                       </div>
                       {docs.map((doc) => renderArchivo(doc, false))}
                       {permiso.subir && (
-                        <label className={`btn mini subir-archivo ${subiendo ? "deshabilitado" : ""}`}>
-                          {subiendo === req ? "Subiendo…" : docs.length ? "+ Agregar otro archivo" : "Subir archivo"}
-                          <input
-                            type="file"
-                            hidden
-                            disabled={Boolean(subiendo)}
-                            onChange={(e) => subirArchivo(e, req)}
-                          />
-                        </label>
+                        <SubirArchivo
+                          etiqueta={subiendo === req ? "Subiendo…" : docs.length ? "+ Agregar otro archivo" : "Subir archivo"}
+                          ocupado={Boolean(subiendo)}
+                          onChange={(e) => subirArchivo(e, req)}
+                        />
                       )}
                     </div>
                   );
@@ -1307,15 +1479,11 @@ export default function TramiteDetalle() {
                 </div>
                 {(tarea.documentos || []).filter((d) => !(tarea.docsRequeridos || []).includes(d.tipoDoc)).map((doc) => renderArchivo(doc, true))}
                 {permiso.subir && (
-                  <label className={`btn mini subir-archivo ${subiendo ? "deshabilitado" : ""}`}>
-                    {subiendo === "Otros" ? "Subiendo…" : "+ Subir otro documento"}
-                    <input
-                      type="file"
-                      hidden
-                      disabled={Boolean(subiendo)}
-                      onChange={(e) => subirArchivo(e, "Otros")}
-                    />
-                  </label>
+                  <SubirArchivo
+                    etiqueta={subiendo === "Otros" ? "Subiendo…" : "+ Subir otro documento"}
+                    ocupado={Boolean(subiendo)}
+                    onChange={(e) => subirArchivo(e, "Otros")}
+                  />
                 )}
               </div>
             </div>
@@ -1358,13 +1526,215 @@ export default function TramiteDetalle() {
         </div>
       )}
 
+      {modalProcedimiento && (
+        <div className="modal-fondo" onClick={(e) => e.target === e.currentTarget && setModalProcedimiento(false)}>
+          <form className="modal" onSubmit={guardarProcedimiento}>
+            <div className="modal-cab">
+              <div>
+                <h3>Nuevo trámite</h3>
+                <span className="ref">Procedimiento para cumplir un hito. La entidad y la obra se toman del contrato abierto.</span>
+              </div>
+              <button type="button" className="cerrar" onClick={() => setModalProcedimiento(false)}>×</button>
+            </div>
+            <div className="modal-cuerpo">
+              {errorProc && <div className="alerta">{errorProc}</div>}
+              <div className="nota-info">
+                <strong>Entidad:</strong> {tramite.entidad || "—"} <br />
+                <strong>Obra:</strong> {tramite.codigo} · {tramite.denominacion}
+              </div>
+              <div className="grid-form">
+                <label className="campo-grupo ancho-completo">
+                  <span className="campo">Hito que debe cumplir *</span>
+                  <select
+                    required
+                    value={procForm.hitoId || ""}
+                    onChange={(e) => {
+                      const hito = items.find((i) => i.id === e.target.value);
+                      setProcForm((f) => ({
+                        ...f,
+                        hitoId: e.target.value,
+                        nombre: f.nombre && !f.nombre.startsWith("Trámite para ") ? f.nombre : (hito ? `Trámite para ${hito.codigo} ${hito.nombre}` : ""),
+                      }));
+                    }}
+                  >
+                    <option value="">Selecciona un hito</option>
+                    {items.filter((i) => i.estado !== "No aplica").map((i) => (
+                      <option key={i.id} value={i.id}>{i.codigo} · {i.nombre}</option>
+                    ))}
+                  </select>
+                </label>
+                <label className="campo-grupo ancho-completo">
+                  <span className="campo">Nombre del trámite</span>
+                  <input value={procForm.nombre || ""} onChange={(e) => setProcForm({ ...procForm, nombre: e.target.value })} placeholder="Ej. Trámite de ampliación de plazo" />
+                </label>
+                <label className="campo-grupo">
+                  <span className="campo">Destino</span>
+                  <select value={procForm.destino || "entidad"} onChange={(e) => setProcForm({ ...procForm, destino: e.target.value })}>
+                    <option value="entidad">Entidad</option>
+                    <option value="supervision">Supervisión de obra</option>
+                    <option value="interno">Interno</option>
+                  </select>
+                </label>
+                <label className="campo-grupo">
+                  <span className="campo">Prioridad</span>
+                  <select value={procForm.prioridad || "Normal"} onChange={(e) => setProcForm({ ...procForm, prioridad: e.target.value })}>
+                    {PRIORIDADES_TRAMITE.map((p) => <option key={p}>{p}</option>)}
+                  </select>
+                </label>
+                <label className="campo-grupo ancho-completo">
+                  <span className="campo">Descripción</span>
+                  <textarea rows="2" value={procForm.descripcion || ""} onChange={(e) => setProcForm({ ...procForm, descripcion: e.target.value })} placeholder="Qué se gestiona y qué documento objetivo se espera…" />
+                </label>
+              </div>
+            </div>
+            <div className="modal-pie">
+              <button type="button" className="btn" onClick={() => setModalProcedimiento(false)}>Cancelar</button>
+              <button type="submit" className="btn primario" disabled={!procForm.hitoId}>Crear trámite</button>
+            </div>
+          </form>
+        </div>
+      )}
+
+      {proc && (
+        <div className="modal-fondo" onClick={(e) => e.target === e.currentTarget && setProcedimientoId(null)}>
+          <div className="modal modal-tarea">
+            <div className="modal-cab modal-tarea-cab">
+              <div>
+                <div className="codigo">
+                  {proc.numero} · {tramite.entidad || "—"} · {tramite.codigo} {tramite.denominacion}
+                </div>
+                <h3>{proc.nombre}</h3>
+                <div className="chips">
+                  <span className="badge azul">{proc.destino === "entidad" ? "Entidad" : proc.destino === "supervision" ? "Supervisión" : "Interno"}</span>
+                  <span className={`badge ${proc.prioridad === "Normal" ? "gris" : "rojo"}`}>{proc.prioridad || "Normal"}</span>
+                  <span className="badge gris">{proc.estado}</span>
+                  <button type="button" className="btn mini" onClick={() => { const h = items.find((i) => i.id === proc.hitoId); if (h) { setProcedimientoId(null); abrirTarea(h); } }}>
+                    Hito {proc.hitoCodigo} →
+                  </button>
+                </div>
+              </div>
+              <button type="button" className="cerrar" onClick={() => setProcedimientoId(null)}>×</button>
+            </div>
+            <div className="modal-cuerpo modal-tarea-cuerpo">
+              {errorProc && <div className="alerta">{errorProc}</div>}
+              <div className="nota-info">
+                Procedimiento para cumplir el hito <strong>{proc.hitoCodigo} · {proc.hitoNombre}</strong>. El trámite es todo el flujo hasta la obtención del documento objetivo; al completarse el hito se archiva automáticamente.
+              </div>
+
+              <div className="flujo-tramite">
+                {ESTADOS_TRAMITE.map((estado, i) => {
+                  const actualIndex = ESTADOS_TRAMITE.indexOf(proc.estado);
+                  return (
+                    <span key={estado} className={`flujo-paso ${i < actualIndex ? "hecho" : i === actualIndex ? "actual" : ""}`} title={estado}>
+                      {estado}
+                    </span>
+                  );
+                })}
+              </div>
+
+              {permiso.registrar && (
+                <div className="grid-form">
+                  <label className="campo-grupo">
+                    <span className="campo">Estado del trámite</span>
+                    <select value={proc.estado} onChange={(e) => { actualizarProcedimiento(proc.id, { estado: e.target.value }); recargar(); }}>
+                      {ESTADOS_TRAMITE.map((e) => <option key={e}>{e}</option>)}
+                    </select>
+                  </label>
+                  <label className="campo-grupo">
+                    <span className="campo">Prioridad</span>
+                    <select value={proc.prioridad || "Normal"} onChange={(e) => { actualizarProcedimiento(proc.id, { prioridad: e.target.value }); recargar(); }}>
+                      {PRIORIDADES_TRAMITE.map((p) => <option key={p}>{p}</option>)}
+                    </select>
+                  </label>
+                </div>
+              )}
+
+              <div className="docs-bloque">
+                <div className="docs-cab"><h4>Movimientos del trámite</h4></div>
+                {(proc.movimientos || []).length === 0 && <div className="vacio">Sin movimientos todavía.</div>}
+                {(proc.movimientos || []).map((m) => (
+                  <div className="archivo-fila" key={m.id}>
+                    <div className="doc-ico">{fecha(m.fecha).slice(0, 6)}</div>
+                    <div className="archivo-datos">
+                      <strong>
+                        {m.tipo}
+                        {m.numeroRegistro ? ` · Reg. ${m.numeroRegistro}` : ""}
+                        {m.numeroDocumento ? ` · ${m.numeroDocumento}` : ""}
+                      </strong>
+                      <span>
+                        {fecha(m.fecha)}{m.hora ? ` ${m.hora}` : ""}{m.usuario ? ` · ${m.usuario}` : ""}
+                        {m.dependenciaOrigen ? ` · ${m.dependenciaOrigen} → ${m.dependenciaDestino || "Entidad"}` : ""}
+                        {m.oficina ? ` · ${m.oficina}` : ""}
+                      </span>
+                      <span>{m.nota || ""}{m.archivoNombre ? ` · ${m.archivoNombre}` : ""}</span>
+                    </div>
+                    {m.archivoId && <button type="button" className="btn mini" onClick={() => descargarArchivo(m.archivoId, m.archivoNombre).catch((e) => setErrorProc(e.message))}>Ver</button>}
+                  </div>
+                ))}
+                {permiso.registrar && (
+                  <form className="grid-form" onSubmit={guardarMovimientoProc}>
+                    <label className="campo-grupo">
+                      <span className="campo">Fecha</span>
+                      <input type="date" value={movForm.fecha || ""} onChange={(e) => setMovForm({ ...movForm, fecha: e.target.value })} required />
+                    </label>
+                    <label className="campo-grupo">
+                      <span className="campo">Hora</span>
+                      <input type="time" value={movForm.hora || ""} onChange={(e) => setMovForm({ ...movForm, hora: e.target.value })} />
+                    </label>
+                    <label className="campo-grupo">
+                      <span className="campo">Acción</span>
+                      <select value={movForm.tipo || "otro"} onChange={(e) => setMovForm({ ...movForm, tipo: e.target.value })}>
+                        {["asiento", "presentado", "observado", "levantado", "conformidad", "pronunciamiento", "otro"].map((t) => <option key={t} value={t}>{t}</option>)}
+                      </select>
+                    </label>
+                    <label className="campo-grupo">
+                      <span className="campo">N.º de registro de oficina</span>
+                      <input value={movForm.numeroRegistro || ""} onChange={(e) => setMovForm({ ...movForm, numeroRegistro: e.target.value })} placeholder="Ej. 015-2026" />
+                    </label>
+                    <label className="campo-grupo">
+                      <span className="campo">Oficina</span>
+                      <input value={movForm.oficina || ""} onChange={(e) => setMovForm({ ...movForm, oficina: e.target.value })} placeholder="Mesa de partes, logística…" />
+                    </label>
+                    <label className="campo-grupo">
+                      <span className="campo">N.º de documento</span>
+                      <input value={movForm.numeroDocumento || ""} onChange={(e) => setMovForm({ ...movForm, numeroDocumento: e.target.value })} placeholder="Carta N.º 015-2026" />
+                    </label>
+                    <label className="campo-grupo ancho-completo">
+                      <span className="campo">Nota</span>
+                      <input value={movForm.nota || ""} onChange={(e) => setMovForm({ ...movForm, nota: e.target.value })} placeholder="Observación o proveído" />
+                    </label>
+                    <label className="campo-grupo ancho-completo">
+                      <span className="campo">Archivo del movimiento</span>
+                      <input type="file" onChange={(e) => setProcArchivo(e.target.files?.[0] || null)} />
+                    </label>
+                    <div className="ancho-completo">
+                      <TomarFoto onChange={(e) => setProcArchivo(e.target.files?.[0] || null)} />
+                      {procArchivo && <span className="ref"> Archivo elegido: {procArchivo.name}</span>}
+                    </div>
+                    <div className="acciones-descarga ancho-completo">
+                      <button type="submit" className="btn primario">Registrar trámite</button>
+                    </div>
+                  </form>
+                )}
+              </div>
+
+            </div>
+            <div className="modal-pie">
+              {permiso.borrar_hito && <button type="button" className="btn peligro" onClick={borrarProcedimiento}>Eliminar trámite</button>}
+              <span className="pie-espacio" />
+              <button type="button" className="btn" onClick={() => setProcedimientoId(null)}>Cerrar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {modalEventual && (
         <div className="modal-fondo" onClick={(e) => e.target === e.currentTarget && setModalEventual(false)}>
           <form className="modal" onSubmit={crearEventual}>
             <div className="modal-cab">
               <div>
-                <h3>Nuevo trámite eventual</h3>
-                <span className="ref">Solo se crea cuando ocurre el hecho generador. Cada instancia conserva sus propios documentos y plazos.</span>
+                <h3>Nuevo hito eventual</h3>
+                <span className="ref">Solo se crea cuando ocurre el hecho generador. Cada instancia conserva sus propios documentos y plazos. Para seguir un procedimiento, usa “+ Nuevo trámite”.</span>
               </div>
               <button type="button" className="cerrar" onClick={() => setModalEventual(false)}>×</button>
             </div>
@@ -1384,9 +1754,20 @@ export default function TramiteDetalle() {
                   </button>
                 ))}
               </div>
+              <label className="campo-grupo">
+                <span className="campo">Hito al que corresponde (opcional)</span>
+                <select value={eventualHitoId} onChange={(e) => setEventualHitoId(e.target.value)}>
+                  <option value="">Sin hito vinculado</option>
+                  {items
+                    .filter((i) => i.tipo !== "eventual" && i.tipo !== "tramite" && i.estado !== "No aplica")
+                    .map((i) => (
+                      <option key={i.id} value={i.id}>{i.codigo} · {i.nombre}</option>
+                    ))}
+                </select>
+              </label>
               {eventualSel && (
                 <div className="nota-info">
-                  Se creará el trámite con su código correlativo dentro de “Modificaciones y ampliaciones”. Luego podrás subir cada documento y ajustar su fecha límite.
+                  Se creará el trámite con su código correlativo dentro de “Modificaciones y ampliaciones”. El trámite reúne los documentos internos, los pasos ante la supervisión o la entidad y los cargos hasta emitir el documento objetivo del hito. {eventualHitoId ? "Quedará vinculado al hito elegido." : ""}
                 </div>
               )}
             </div>
