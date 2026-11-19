@@ -1,8 +1,9 @@
 import React, { useState } from "react";
-import { getCatalogo, guardarCatalogo, restaurarCatalogo, puede } from "../lib/store.js";
+import { getCatalogo, guardarCatalogo, restaurarCatalogo, prepararCatalogoImportado, puede } from "../lib/store.js";
+import { descargarTexto } from "../lib/archivos.js";
 import {
   tipoDeAmbito, completarPlantilla, recorrerPlantillas, renumerarHitos,
-  siguienteCodigoEtapa, siguienteCodigoSeccion, claveUnica,
+  siguienteCodigoEtapa, siguienteCodigoSeccion, claveUnica, moverHitoASeccion,
 } from "../lib/catalogo.js";
 import EditorPlantilla from "../components/EditorPlantilla.jsx";
 
@@ -88,6 +89,29 @@ export default function Catalogo() {
     setError("");
   };
 
+  // Copia del catálogo guardado, para llevar las definiciones de un dispositivo a otro.
+  const exportar = () => {
+    const contenido = { formato: "acrodocs-catalogo", version: 1, exportado: new Date().toISOString(), catalogo: JSON.parse(guardado) };
+    descargarTexto(JSON.stringify(contenido, null, 2), "acrodocs_catalogo.json");
+    setAviso("Catálogo exportado: se descargó el archivo acrodocs_catalogo.json.");
+    setError("");
+  };
+
+  // El archivo se carga como borrador: no cambia nada hasta pulsar "Guardar cambios".
+  const importar = async (evento) => {
+    const archivo = evento.target.files?.[0];
+    evento.target.value = "";
+    if (!archivo) return;
+    try {
+      const json = JSON.parse(await archivo.text());
+      setBorrador(prepararCatalogoImportado(json?.catalogo ?? json));
+      setAviso(`Se cargó «${archivo.name}» como borrador. Revísalo y pulsa Guardar cambios para aplicarlo; Descartar deja el catálogo como estaba.`);
+      setError("");
+    } catch (e) {
+      setError(e instanceof SyntaxError ? "El archivo no es un JSON válido." : e.message || "No se pudo importar el catálogo.");
+    }
+  };
+
   const restaurar = (clave) => {
     const que = clave ? "este elemento a su versión original" : "TODO el catálogo al original (se pierden los hitos propios)";
     if (!window.confirm(`¿Restaurar ${que}?${sucio ? " Los cambios sin guardar se descartan." : ""}`)) return;
@@ -143,6 +167,18 @@ export default function Catalogo() {
     if (!window.confirm(`¿Quitar la sección ${seccion.codigo} ${seccion.nombre} con sus hitos?`)) return;
     mutar((c) => { const e = c[ambito].etapas.find((x) => x.id === etapaId); e.secciones = e.secciones.filter((s) => s.id !== seccion.id); });
   };
+  // Cambiar el lugar de una etapa o de una sección no cambia sus códigos: los contratos
+  // nuevos guardan este orden (ver ordenarGrupos) y el expediente lo respeta.
+  const intercambiar = (lista, id, dir) => {
+    const i = lista.findIndex((x) => x.id === id);
+    const j = i + dir;
+    if (i < 0 || j < 0 || j >= lista.length) return;
+    [lista[i], lista[j]] = [lista[j], lista[i]];
+  };
+  const moverEtapa = (etapaId, dir) => mutar((c) => intercambiar(c[ambito].etapas, etapaId, dir));
+  const moverSeccion = (etapaId, seccionId, dir) =>
+    mutar((c) => intercambiar(c[ambito].etapas.find((e) => e.id === etapaId).secciones, seccionId, dir));
+  const moverHito = (hitoId, seccionId) => mutar((c) => { moverHitoASeccion(c, hitoId, seccionId); });
   const renombrar = (etapaId, seccionId, nombre) => mutar((c) => {
     const e = c[ambito].etapas.find((x) => x.id === etapaId);
     if (seccionId) e.secciones.find((s) => s.id === seccionId).nombre = nombre;
@@ -166,7 +202,7 @@ export default function Catalogo() {
     return p.clave;
   };
 
-  const Fila = ({ tipo, p, indice, total }) => {
+  const Fila = ({ tipo, p, indice, total, seccionId }) => {
     const restauraCon = claveRestaurar(tipo, p);
     return (
       <div className="catalogo-hito-fila" style={p.activo === false ? { opacity: 0.6 } : undefined}>
@@ -181,6 +217,19 @@ export default function Catalogo() {
               <button type="button" className="btn-icono" title="Subir" disabled={indice === 0} onClick={() => moverEnLista(p.id, -1)}>↑</button>
               <button type="button" className="btn-icono" title="Bajar" disabled={indice === total - 1} onClick={() => moverEnLista(p.id, 1)}>↓</button>
             </>
+          )}
+          {editable && tipo === "hito" && (
+            <select className="select-estado" value="" aria-label="Mover a otra sección" onChange={(e) => e.target.value && moverHito(p.id, e.target.value)}>
+              <option value="">Mover a…</option>
+              {borrador[ambito].etapas.map((e) => {
+                const destinos = e.secciones.filter((s) => !s.recurrente && s.id !== seccionId);
+                return destinos.length > 0 && (
+                  <optgroup key={e.id} label={`${e.codigo} ${e.nombre}`}>
+                    {destinos.map((s) => <option key={s.id} value={s.id}>{s.codigo} · {s.nombre}</option>)}
+                  </optgroup>
+                );
+              })}
+            </select>
           )}
           <button type="button" className="btn mini" onClick={() => setEdicion({ id: p.id, tipo })}>{editable ? "Editar" : "Ver"}</button>
           {editable && (
@@ -222,6 +271,19 @@ export default function Catalogo() {
       </div>
 
       {!editable && <div className="nota-info">Puedes consultar el catálogo, pero solo quien tiene permiso para editarlo puede modificarlo.</div>}
+      <details className="ejecutor-detalle">
+        <summary>Copia del catálogo: exportar e importar</summary>
+        <div className="acciones-descarga" style={{ marginTop: 10 }}>
+          <button type="button" className="btn" onClick={exportar}>Exportar catálogo</button>
+          {editable && (
+            <label className="btn subir-archivo" style={{ marginTop: 0 }}>
+              Importar catálogo
+              <input type="file" accept="application/json,.json" hidden onChange={importar} />
+            </label>
+          )}
+        </div>
+        <div className="ref">Sirve para pasar tus definiciones de un dispositivo a otro, por ejemplo de la PC al celular. Se exporta el catálogo guardado; al importar, el archivo se carga como borrador y no cambia nada hasta que guardes.</div>
+      </details>
       {aviso && <div className="nota-info">{aviso}</div>}
       {error && <div className="alerta">{error}</div>}
 
@@ -231,7 +293,7 @@ export default function Catalogo() {
         ))}
       </div>
 
-      {esArbol && arbol.etapas.map((etapa) => (
+      {esArbol && arbol.etapas.map((etapa, ei) => (
         <div className="tarjeta" key={etapa.id}>
           <div className="tarjeta-cab">
             <h3>
@@ -242,6 +304,8 @@ export default function Catalogo() {
             </h3>
             {editable && (
               <div className="chips">
+                <button type="button" className="btn-icono" title="Subir etapa" disabled={ei === 0} onClick={() => moverEtapa(etapa.id, -1)}>↑</button>
+                <button type="button" className="btn-icono" title="Bajar etapa" disabled={ei === arbol.etapas.length - 1} onClick={() => moverEtapa(etapa.id, 1)}>↓</button>
                 <button type="button" className="btn mini" onClick={() => agregarSeccion(etapa.id)}>+ Sección</button>
                 <button type="button" className="btn-icono peligro" title="Quitar etapa" onClick={() => quitarEtapa(etapa)}>×</button>
               </div>
@@ -249,7 +313,7 @@ export default function Catalogo() {
           </div>
           <div className="cuerpo">
             {etapa.secciones.length === 0 && <div className="vacio">Esta etapa no tiene secciones.</div>}
-            {etapa.secciones.map((seccion) => (
+            {etapa.secciones.map((seccion, si) => (
               <div key={seccion.id} style={{ marginBottom: 12 }}>
                 <div className="tarjeta-cab" style={{ padding: "6px 0" }}>
                   <strong>
@@ -261,6 +325,8 @@ export default function Catalogo() {
                   </strong>
                   {editable && (
                     <div className="chips">
+                      <button type="button" className="btn-icono" title="Subir sección" disabled={si === 0} onClick={() => moverSeccion(etapa.id, seccion.id, -1)}>↑</button>
+                      <button type="button" className="btn-icono" title="Bajar sección" disabled={si === etapa.secciones.length - 1} onClick={() => moverSeccion(etapa.id, seccion.id, 1)}>↓</button>
                       {!seccion.recurrente && <button type="button" className="btn mini" onClick={() => agregarHito(etapa.id, seccion.id)}>+ Hito</button>}
                       <button type="button" className="btn-icono peligro" title="Quitar sección" onClick={() => quitarSeccion(etapa.id, seccion)}>×</button>
                     </div>
@@ -268,7 +334,7 @@ export default function Catalogo() {
                 </div>
                 {seccion.recurrente
                   ? seccion.plantilla && <Fila tipo="recurrente" p={seccion.plantilla} indice={0} total={1} />
-                  : seccion.hitos.map((h, i) => <Fila key={h.id} tipo="hito" p={h} indice={i} total={seccion.hitos.length} />)}
+                  : seccion.hitos.map((h, i) => <Fila key={h.id} tipo="hito" p={h} indice={i} total={seccion.hitos.length} seccionId={seccion.id} />)}
                 {!seccion.recurrente && seccion.hitos.length === 0 && <div className="vacio">Sin hitos.</div>}
               </div>
             ))}

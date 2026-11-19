@@ -5,6 +5,8 @@ import {
   crearTareaEventual,
   listarEventuales,
   listarHitosOpcionales,
+  ordenarGrupos,
+  moverHitoASeccion,
 } from "./catalogo.js";
 import { FERIADOS_2026 } from "./fechas.js";
 import golden from "./__fixtures__/tareas-golden.json";
@@ -99,7 +101,7 @@ describe("catalogoSemilla", () => {
       cumplimiento: "Contrato suscrito",
     });
     const valorizaciones = seccionPorCodigo(cat.obra, "1.3.2");
-    expect(valorizaciones).toMatchObject({ recurrente: "mensual", diaLimite: 25, soloPrimerPeriodo: false });
+    expect(valorizaciones).toMatchObject({ recurrente: "mensual", diaLimite: 25, soloPrimerPeriodo: true });
     expect(valorizaciones.plantilla).toMatchObject({ clave: "1.3.2", nombre: "Valorización" });
     expect(seccionPorCodigo(cat.obra, "1.2.10")).toMatchObject({ recurrente: "anual", diaLimite: 15 });
     const ampliacion = cat.eventuales.obra.find((e) => e.clave === "ampliacion");
@@ -140,6 +142,16 @@ describe("crearTareas con el catálogo almacenado", () => {
     const codigos = crearTareas(T001, cat, FERIADOS_2026).map((t) => t.codigo);
     expect(codigos.some((c) => c.startsWith("1.3.3."))).toBe(false);
     expect(codigos).toContain("1.3.2.1");
+  });
+
+  it("las valorizaciones y los informes mensuales nacen solo con el primer periodo, en obra y en consultoría", () => {
+    const cat = catalogoSemilla();
+    const obra = crearTareas(T001, cat, FERIADOS_2026).map((t) => t.codigo);
+    expect(obra.filter((c) => c.startsWith("1.3.2."))).toEqual(["1.3.2.1"]);
+    expect(obra.filter((c) => c.startsWith("1.3.3."))).toEqual(["1.3.3.1"]);
+    const consultoria = crearTareas(T002, cat, FERIADOS_2026).map((t) => t.codigo);
+    expect(consultoria.filter((c) => c.startsWith("2.3.2."))).toEqual(["2.3.2.1"]);
+    expect(consultoria.filter((c) => c.startsWith("2.3.3."))).toEqual(["2.3.3.1"]);
   });
 
   it("usa los datos editados de la plantilla", () => {
@@ -184,5 +196,40 @@ describe("eventuales y opcionales desde el catálogo", () => {
     expect(listarEventuales("Obra", cat).map((e) => e.clave)).toContain("adicional");
     expect(listarHitosOpcionales("Obra", cat).map((e) => e.clave)).toEqual(["conformidad_expediente", "residente_obra"]);
     expect(crearTareaEventual(T002, "adicional", [], cat, FERIADOS_2026)).toBeNull();
+  });
+});
+
+describe("orden y lugar de los hitos en el catálogo", () => {
+  it("ordenarGrupos recoloca los grupos con orden entre sus lugares y deja los demás donde los pone el código", () => {
+    const g = (codigo, orden) => ({ codigo, orden });
+    const salida = ordenarGrupos([g("1.5", 3), g("1.4"), g("1.1", 1), g("1.3", 0), g("1.2", 2)]).map((x) => x.codigo);
+    expect(salida).toEqual(["1.3", "1.1", "1.2", "1.4", "1.5"]);
+  });
+
+  it("los hitos nuevos recuerdan el lugar de su etapa y su sección en el catálogo, aunque el código no cambie", () => {
+    const cat = catalogoSemilla();
+    const etapas = cat.obra.etapas;
+    [etapas[0], etapas[1]] = [etapas[1], etapas[0]];
+    const tareas = crearTareas(T001, cat, FERIADOS_2026);
+    const hito = (codigo) => tareas.find((t) => t.codigo === codigo);
+    expect(hito("1.2.1")).toMatchObject({ etapaCodigo: "1.2", etapaOrden: 0, seccionOrden: 0 });
+    expect(hito("1.1.1")).toMatchObject({ etapaCodigo: "1.1", etapaOrden: 1, seccionOrden: 0 });
+    expect(hito("1.2.11.1")).toMatchObject({ etapaOrden: 0, seccionOrden: 2 });
+  });
+
+  it("moverHitoASeccion pasa un hito a otra sección y renumera las dos, pero no a una sección recurrente", () => {
+    const cat = catalogoSemilla();
+    const origen = seccionPorCodigo(cat.obra, "1.1");
+    const destino = seccionPorCodigo(cat.obra, "1.2");
+    const hito = origen.hitos[1];
+
+    expect(moverHitoASeccion(cat, hito.id, destino.id)).toBe(true);
+    expect(origen.hitos.map((h) => h.codigo)).toEqual(["1.1.1", "1.1.2", "1.1.3", "1.1.4"]);
+    expect(destino.hitos).toHaveLength(9);
+    expect(destino.hitos.at(-1)).toMatchObject({ id: hito.id, codigo: "1.2.9" });
+
+    const recurrente = seccionPorCodigo(cat.obra, "1.3.2");
+    expect(moverHitoASeccion(cat, origen.hitos[0].id, recurrente.id)).toBe(false);
+    expect(origen.hitos).toHaveLength(4);
   });
 });

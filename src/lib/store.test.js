@@ -1384,6 +1384,44 @@ describe("regresión: generación de hitos igual que antes del catálogo almacen
   });
 });
 
+describe("catálogo exportado e importado", () => {
+  it("prepararCatalogoImportado acepta un catálogo exportado, conserva su orden y rechaza lo que no lo es", () => {
+    entrar("gerente");
+    const exportado = JSON.parse(JSON.stringify(store.getCatalogo()));
+    const listo = store.prepararCatalogoImportado(exportado);
+    expect(listo.obra.etapas.map((e) => e.codigo)).toEqual(exportado.obra.etapas.map((e) => e.codigo));
+    expect(listo.consultoria.etapas).toHaveLength(exportado.consultoria.etapas.length);
+    expect(() => store.prepararCatalogoImportado({ obra: {} })).toThrow();
+    expect(() => store.prepararCatalogoImportado(null)).toThrow();
+  });
+});
+
+describe("valorizaciones e informes mensuales agregados de a uno", () => {
+  it("agregarPeriodo suma la siguiente valorización y el siguiente informe sin tocar los anteriores", () => {
+    entrar("gerente");
+    const t = store.createTramite({
+      codigo: "V-OBRA", denominacion: "Obra con valorizaciones", tipo_objeto: "Obra",
+      fecha_inicio: "2026-03-02", fecha_fin: "2026-12-30", fecha_suscripcion: "2026-02-20",
+    });
+    const valorizaciones = () => store.listItems(t.id).filter((i) => i.seccionCodigo === "1.3.2");
+    expect(valorizaciones().map((i) => i.codigo)).toEqual(["1.3.2.1"]);
+
+    const segunda = store.agregarPeriodo(t.id, "1.3.2");
+    expect(segunda).toMatchObject({
+      codigo: "1.3.2.2", nombre: "Valorización 02 — abril 2026", periodo: "2026-04",
+      fecha_limite: "2026-04-25", tipo: "recurrente",
+    });
+    expect(valorizaciones().map((i) => i.codigo)).toEqual(["1.3.2.1", "1.3.2.2"]);
+
+    const informes = () => store.listItems(t.id).filter((i) => i.seccionCodigo === "1.3.3");
+    expect(informes().map((i) => i.codigo)).toEqual(["1.3.3.1"]);
+    expect(store.agregarPeriodo(t.id, "1.3.3")).toMatchObject({
+      codigo: "1.3.3.2", nombre: "Informe mensual de avance 02 — abril 2026", fecha_limite: "2026-04-28",
+    });
+    expect(informes().map((i) => i.codigo)).toEqual(["1.3.3.1", "1.3.3.2"]);
+  });
+});
+
 describe("catálogo almacenado", () => {
   const hitoEn = (catalogo, clave) => {
     for (const ambito of ["obra", "consultoria"]) {
@@ -1469,8 +1507,10 @@ describe("catálogo almacenado", () => {
     const t = nuevaObra();
     const v = store.listItems(t.id).find((i) => i.codigo === "1.3.2.1");
     expect(v).toMatchObject({ nombre: "Valorización 01 — marzo 2026", docsRequeridos: ["Valorización firmada"] });
-    const v2 = store.listItems(t.id).find((i) => i.codigo === "1.3.2.2");
-    expect(v2.nombre).toBe("Valorización 02 — abril 2026");
+    // El contrato nace con una sola valorización; la siguiente se agrega a mano y toma la plantilla guardada.
+    expect(store.listItems(t.id).filter((i) => i.seccionCodigo === "1.3.2")).toHaveLength(1);
+    const v2 = store.agregarPeriodo(t.id, "1.3.2");
+    expect(v2).toMatchObject({ nombre: "Valorización 02 — abril 2026", docsRequeridos: ["Valorización firmada"] });
   });
 
   it("guardarPlantilla con una clave que no está en el catálogo no escribe nada", () => {
@@ -1654,6 +1694,7 @@ describe("seguimiento por pasos", () => {
     const item = ampliacion();
     expect(() => store.updateItem(item.id, { estado: "Completado" })).toThrow("lo determinan sus pasos");
 
+    store.agregarPeriodo("t-001", "1.3.2");
     const valorizacion = store.listItems("t-001").find((i) => i.clavePlantilla === "1.3.2" && i.estado !== "Completado");
     store.updateItem(valorizacion.id, { pasos: [] });
     expect(store.flujoDeItem(valorizacion.id)).toBeNull();

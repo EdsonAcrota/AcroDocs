@@ -155,13 +155,13 @@ const OBRA = {
           "Metrados y análisis de precios",
           "Informe del supervisor",
           "Comprobante de pago",
-        ], { cumplimiento: "Comprobante de pago", nota: "Trámite mensual. Cada valorización genera su propio expediente." }), { diaLimite: 25 }),
+        ], { cumplimiento: "Comprobante de pago", nota: "Trámite mensual. Cada valorización genera su propio expediente." }), { diaLimite: 25, soloPrimerPeriodo: true }),
         R("1.3.3", "Informes mensuales de avance", T("", "Informe mensual de avance", [
           "Informe de avance físico",
           "Informe de avance financiero",
           "Reporte fotográfico",
           "Aprobación del supervisor",
-        ], { cumplimiento: "Aprobación del supervisor" }), { diaLimite: 28 }),
+        ], { cumplimiento: "Aprobación del supervisor" }), { diaLimite: 28, soloPrimerPeriodo: true }),
       ],
     },
     {
@@ -254,8 +254,8 @@ const CONSULTORIA = {
           T("2.3.1.5", "Control de calidad del servicio", ["Protocolo de calidad", "Informe de revisión"], { dias: 0 }),
           T("2.3.1.6", "Levantamiento de observaciones", ["Matriz de observaciones", "Constancia de levantamiento"], { dias: 0 }),
         ]),
-        R("2.3.2", "Valorizaciones del servicio", T("", "Valorización del servicio", ["Valorización firmada", "Informe de avance", "Conformidad del supervisor", "Comprobante de pago"], { nota: "Trámite mensual." }), { diaLimite: 25 }),
-        R("2.3.3", "Informes mensuales", T("", "Informe mensual de avance", ["Informe de avance", "Reporte de actividades", "Aprobación del supervisor"]), { diaLimite: 28 }),
+        R("2.3.2", "Valorizaciones del servicio", T("", "Valorización del servicio", ["Valorización firmada", "Informe de avance", "Conformidad del supervisor", "Comprobante de pago"], { nota: "Trámite mensual." }), { diaLimite: 25, soloPrimerPeriodo: true }),
+        R("2.3.3", "Informes mensuales", T("", "Informe mensual de avance", ["Informe de avance", "Reporte de actividades", "Aprobación del supervisor"]), { diaLimite: 28, soloPrimerPeriodo: true }),
       ],
     },
     {
@@ -796,6 +796,38 @@ export const renumerarHitos = (seccion) => {
   return seccion;
 };
 
+// Pasa un hito del catálogo al final de otra sección de su mismo tipo de contrato (obra
+// o consultoría) y renumera las dos secciones. No admite secciones recurrentes. Devuelve
+// false si no hay nada que mover.
+export const moverHitoASeccion = (catalogo, hitoId, seccionId) => {
+  for (const ambito of AMBITOS) {
+    const secciones = (catalogo?.[ambito]?.etapas || []).flatMap((e) => e.secciones || []);
+    const origen = secciones.find((s) => (s.hitos || []).some((h) => h.id === hitoId));
+    const destino = secciones.find((s) => s.id === seccionId);
+    if (!origen || !destino) continue;
+    if (destino === origen || destino.recurrente) return false;
+    const hito = origen.hitos.find((h) => h.id === hitoId);
+    origen.hitos.splice(origen.hitos.indexOf(hito), 1);
+    destino.hitos = [...(destino.hitos || []), hito];
+    renumerarHitos(origen);
+    renumerarHitos(destino);
+    return true;
+  }
+  return false;
+};
+
+// Ordena las etapas o secciones de un expediente (grupos con `codigo` y, si el contrato
+// las guardó, `orden`: su lugar en el catálogo al crearlo). Primero van por código y luego
+// los grupos con `orden` se recolocan entre los lugares que ellos mismos ocupan; los que
+// no lo traen (eventuales, opcionales, contratos anteriores) conservan su lugar por código.
+export const ordenarGrupos = (grupos) => {
+  const lista = [...grupos].sort((a, b) => String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }));
+  const lugares = lista.flatMap((g, i) => (Number.isFinite(g.orden) ? [i] : []));
+  const conOrden = lugares.map((i) => lista[i]).sort((a, b) => a.orden - b.orden);
+  lugares.forEach((lugar, k) => { lista[lugar] = conOrden[k]; });
+  return lista;
+};
+
 // Etapa donde se numeran los trámites eventuales de cada tipo de contrato
 // (`crearTareaEventual`). El editor no la entrega a una etapa nueva.
 export const PREFIJO_EVENTUALES = { obra: "1.4", consultoria: "2.5" };
@@ -905,8 +937,9 @@ export const normalizarPasos = (pasos) => {
 export const crearTareas = (tramite, catalogo, feriados) => {
   const arbol = catalogo?.[ambitoDe(tramite.tipo_objeto)] || { etapas: [] };
   const tareas = [];
-  for (const etapa of arbol.etapas || []) {
-    for (const seccion of etapa.secciones || []) {
+  for (const [ei, etapa] of (arbol.etapas || []).entries()) {
+    for (const [si, seccion] of (etapa.secciones || []).entries()) {
+      const desde = tareas.length;
       const plantilla = seccion.plantilla;
       if (seccion.recurrente === "mensual") {
         if (!plantilla || plantilla.activo === false) continue;
@@ -969,9 +1002,27 @@ export const crearTareas = (tramite, catalogo, feriados) => {
           tareas.push(crearTarea(tramite, etapa, seccion, efectiva, extra));
         }
       }
+      // Lugar de la etapa y de la sección en el catálogo al crear el contrato: el
+      // expediente lo respeta aunque los códigos no cambien (ver ordenarGrupos).
+      for (let k = desde; k < tareas.length; k += 1) {
+        tareas[k].etapaOrden = ei;
+        tareas[k].seccionOrden = si;
+      }
     }
   }
   return tareas;
+};
+
+// Secciones mensuales que nacen solo con el primer periodo: los siguientes se agregan
+// desde el expediente, conforme avanza la obra o la consultoría. El valor es el texto
+// del botón que los agrega.
+export const PERIODOS_A_MANO = {
+  "1.2.11": "+ Agregar mes",
+  "2.2.8": "+ Agregar mes",
+  "1.3.2": "+ Agregar valorización",
+  "2.3.2": "+ Agregar valorización",
+  "1.3.3": "+ Agregar informe",
+  "2.3.3": "+ Agregar informe",
 };
 
 export const TIPOS_FIANZA = [

@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   migrarV6aV7, USUARIOS_DEMO, aplicarPerfeccionamientoBases, actualizarPerfeccionamientoItems,
+  aplicarPrimerPeriodoManual,
 } from "./migracion.js";
 import { catalogoSemilla } from "./catalogo.js";
 import { MATRIZ_INICIAL, ROLES } from "./permisos.js";
@@ -231,6 +232,18 @@ describe("perfeccionamiento según bases integradas", () => {
     otra.docs = ["Solo mi lista"];
     expect(aplicarPerfeccionamientoBases(editado)).toBe(false);
     expect(otra.docs).toEqual(["Solo mi lista"]);
+  });
+
+  it("un catálogo guardado con todos los periodos pasa a generar solo el primero, una sola vez", () => {
+    const catalogo = catalogoSemilla();
+    const secciones = ["obra", "consultoria"].flatMap((ambito) => catalogo[ambito].etapas.flatMap((e) => e.secciones));
+    const mensuales = secciones.filter((s) => ["1.3.2", "2.3.2", "1.3.3", "2.3.3"].includes(s.codigo));
+    expect(mensuales).toHaveLength(4);
+    mensuales.forEach((s) => { s.soloPrimerPeriodo = false; });
+
+    expect(aplicarPrimerPeriodoManual(catalogo)).toBe(true);
+    expect(mensuales.map((s) => s.soloPrimerPeriodo)).toEqual([true, true, true, true]);
+    expect(aplicarPrimerPeriodoManual(catalogo)).toBe(false);
   });
 
   it("actualiza el hito existente sin tocar archivos ni estado", () => {

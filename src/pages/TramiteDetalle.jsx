@@ -4,7 +4,7 @@ import {
   getTramite, updateTramite, deleteTramite, listItems, updateItem, addItem, removeItem,
   agregarDocumento, reemplazarDocumento, eliminarDocumento, puede,
   addTareaEventual, listarEventuales, listarHitosOpcionales, addHitoOpcional,
-  agregarMesSCTR, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
+  agregarPeriodo, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
   actualizarCatalogoPorClave, agregarCatalogoHito, moverItem, hoyISO,
   listProcedimientos, getProcedimiento, crearProcedimiento, actualizarProcedimiento,
   eliminarProcedimiento, agregarMovimientoProcedimiento,
@@ -12,7 +12,7 @@ import {
   nombreEjecutor, validarEjecutor,
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
-import { TIPOS_FIANZA, catalogoDe } from "../lib/catalogo.js";
+import { TIPOS_FIANZA, PERIODOS_A_MANO, catalogoDe, ordenarGrupos } from "../lib/catalogo.js";
 import {
   guardarArchivo, descargarArchivo, descargarComoZip, eliminarArchivo, formatearTamano, iconoArchivo,
 } from "../lib/archivos.js";
@@ -205,10 +205,10 @@ export default function TramiteDetalle() {
       if (!mapa.has(t.etapaCodigo)) {
         mapa.set(t.etapaCodigo, { codigo: t.etapaCodigo, nombre: t.etapaNombre });
       }
+      const e = mapa.get(t.etapaCodigo);
+      if (!Number.isFinite(e.orden) && Number.isFinite(t.etapaOrden)) e.orden = t.etapaOrden;
     }
-    return [...mapa.values()].sort((a, b) =>
-      String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true })
-    );
+    return ordenarGrupos([...mapa.values()]);
   }, [items]);
 
   const stats = useMemo(() => {
@@ -260,6 +260,7 @@ export default function TramiteDetalle() {
         });
       }
       const etapa = mapa.get(t.etapaCodigo);
+      if (!Number.isFinite(etapa.orden) && Number.isFinite(t.etapaOrden)) etapa.orden = t.etapaOrden;
       if (!etapa.secciones.has(t.seccionCodigo)) {
         etapa.secciones.set(t.seccionCodigo, {
           codigo: t.seccionCodigo,
@@ -267,14 +268,14 @@ export default function TramiteDetalle() {
           tareas: [],
         });
       }
-      etapa.secciones.get(t.seccionCodigo).tareas.push(t);
+      const seccion = etapa.secciones.get(t.seccionCodigo);
+      if (!Number.isFinite(seccion.orden) && Number.isFinite(t.seccionOrden)) seccion.orden = t.seccionOrden;
+      seccion.tareas.push(t);
     }
-    return [...mapa.values()]
-      .sort((a, b) => String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }))
+    return ordenarGrupos([...mapa.values()])
       .map((e) => ({
         ...e,
-        secciones: [...e.secciones.values()]
-          .sort((a, b) => String(a.codigo).localeCompare(String(b.codigo), "es", { numeric: true }))
+        secciones: ordenarGrupos([...e.secciones.values()])
           .map((s) => ({
             ...s,
             tareas: [...s.tareas].sort((a, b) =>
@@ -465,7 +466,7 @@ export default function TramiteDetalle() {
 
   const agregarMes = (seccionCodigo) => {
     if (!permiso.agregar || !seccionCodigo) return;
-    const creado = agregarMesSCTR(id);
+    const creado = agregarPeriodo(id, seccionCodigo);
     recargar();
     if (creado) abrirTarea(creado);
   };
@@ -1154,8 +1155,8 @@ export default function TramiteDetalle() {
                       {permiso.agregar && seccion.codigo === "2.2.7" && (
                         <button className="btn mini" onClick={abrirFianzas}>Configurar fianzas</button>
                       )}
-                      {permiso.agregar && (seccion.codigo === "1.2.11" || seccion.codigo === "2.2.8") && (
-                        <button className="btn mini" onClick={() => agregarMes(seccion.codigo)}>+ Agregar mes</button>
+                      {permiso.agregar && PERIODOS_A_MANO[seccion.codigo] && (
+                        <button className="btn mini" onClick={() => agregarMes(seccion.codigo)}>{PERIODOS_A_MANO[seccion.codigo]}</button>
                       )}
                     </div>
                     <div className="tareas-lista">

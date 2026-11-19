@@ -13,7 +13,7 @@ const ROTULO_REGISTRO = { asiento: "Asiento de cuaderno", presentacion: "Present
 export default function EditorPlantilla({ plantilla, tipo, soloLectura, onAplicar, onCerrar }) {
   const [f, setF] = useState(() => ({
     ...JSON.parse(JSON.stringify(plantilla)),
-    docsTxt: (plantilla.docs || []).join("\n"),
+    docsLista: [...(plantilla.docs || [])],
     levantaOn: Boolean(plantilla.plazoLevantamiento),
     levantaDias: plantilla.plazoLevantamiento?.dias ?? 5,
     levantaHabiles: plantilla.plazoLevantamiento?.habiles !== false,
@@ -22,7 +22,19 @@ export default function EditorPlantilla({ plantilla, tipo, soloLectura, onAplica
   const [error, setError] = useState("");
 
   const poner = (campo, valor) => setF((a) => ({ ...a, [campo]: valor }));
-  const docs = f.docsTxt.split("\n").map((d) => d.trim()).filter(Boolean);
+  const docs = f.docsLista.map((d) => d.trim()).filter(Boolean);
+
+  const ponerDoc = (i, valor) => setF((a) => ({ ...a, docsLista: a.docsLista.map((d, k) => (k === i ? valor : d)) }));
+  const agregarDoc = () => setF((a) => ({ ...a, docsLista: [...a.docsLista, ""] }));
+  const quitarDoc = (i) => setF((a) => ({ ...a, docsLista: a.docsLista.filter((_, k) => k !== i) }));
+  const moverDoc = (i, dir) =>
+    setF((a) => {
+      const lista = [...a.docsLista];
+      const j = i + dir;
+      if (j < 0 || j >= lista.length) return a;
+      [lista[i], lista[j]] = [lista[j], lista[i]];
+      return { ...a, docsLista: lista };
+    });
 
   const ponerPaso = (i, campo, valor) =>
     setF((a) => ({ ...a, pasos: a.pasos.map((p, k) => (k === i ? { ...p, [campo]: valor } : p)) }));
@@ -47,7 +59,7 @@ export default function EditorPlantilla({ plantilla, tipo, soloLectura, onAplica
       setError("Escribe el nombre.");
       return;
     }
-    const { docsTxt, levantaOn, levantaDias, levantaHabiles, ...resto } = f;
+    const { docsLista, levantaOn, levantaDias, levantaHabiles, ...resto } = f;
     const pasos = normalizarPasos(f.pasos.map(({ alertasTxt, ...p }) => ({ ...p, alertas: alertasDesdeTexto(alertasTxt) })));
     onAplicar({
       ...resto,
@@ -77,10 +89,23 @@ export default function EditorPlantilla({ plantilla, tipo, soloLectura, onAplica
               <span className="campo">Nombre</span>
               <input value={f.nombre} disabled={dis} onChange={(e) => poner("nombre", e.target.value)} />
             </label>
-            <label className="campo-grupo ancho-completo">
-              <span className="campo">Documentos requeridos (uno por línea)</span>
-              <textarea rows={4} value={f.docsTxt} disabled={dis} onChange={(e) => poner("docsTxt", e.target.value)} />
-            </label>
+            <div className="campo-grupo ancho-completo">
+              <span className="campo">Documentos requeridos</span>
+              {f.docsLista.length === 0 && <div className="ref" style={{ marginBottom: 6 }}>Sin documentos requeridos.</div>}
+              {f.docsLista.map((d, i) => (
+                <div className="input-con-boton" key={i} style={{ marginBottom: 6 }}>
+                  <input value={d} disabled={dis} placeholder="Nombre del documento" onChange={(e) => ponerDoc(i, e.target.value)} />
+                  {!dis && (
+                    <>
+                      <button type="button" className="btn-icono" title="Subir" disabled={i === 0} onClick={() => moverDoc(i, -1)}>↑</button>
+                      <button type="button" className="btn-icono" title="Bajar" disabled={i === f.docsLista.length - 1} onClick={() => moverDoc(i, 1)}>↓</button>
+                      <button type="button" className="btn-icono peligro" title="Quitar documento" onClick={() => quitarDoc(i)}>×</button>
+                    </>
+                  )}
+                </div>
+              ))}
+              {!dis && <button type="button" className="btn mini" onClick={agregarDoc}>+ Agregar documento</button>}
+            </div>
             <label className="campo-grupo">
               <span className="campo">Documento que da por cumplido el hito</span>
               <select value={f.cumplimiento || ""} disabled={dis} onChange={(e) => poner("cumplimiento", e.target.value)}>

@@ -5,7 +5,7 @@ import { MATRIZ_INICIAL } from "./permisos.js";
 import { FERIADOS_2026, sumarDias, sumarHabiles } from "./fechas.js";
 import {
   catalogoSemilla, recorrerPlantillas, ubicarPlantillas, aplicarCambiosPlantilla,
-  plantillaDesdeHitoPersonal, seccionPara, ambitoDe, AMBITOS,
+  plantillaDesdeHitoPersonal, seccionPara, ambitoDe, AMBITOS, PERIODOS_A_MANO,
 } from "./catalogo.js";
 
 const demo = (x, rol, nombre, contratos = []) => ({
@@ -164,6 +164,26 @@ export const aplicarPerfeccionamientoBases = (catalogo) => {
     } else if (destino.verificado !== true && JSON.stringify(destino.docs) === JSON.stringify(origen.docs)) {
       destino.verificado = true;
       cambio = true;
+    }
+  }
+  return cambio;
+};
+
+// Las valorizaciones y los informes mensuales se agregan de a uno, conforme avanza la
+// obra o la consultoría (ver PERIODOS_A_MANO). Un catálogo guardado antes de ese cambio
+// los generaba todos de golpe al crear el contrato: se marca para que genere solo el
+// primero. No toca los contratos ya creados.
+export const aplicarPrimerPeriodoManual = (catalogo) => {
+  let cambio = false;
+  for (const ambito of ["obra", "consultoria"]) {
+    for (const etapa of catalogo?.[ambito]?.etapas || []) {
+      for (const seccion of etapa.secciones || []) {
+        const aMano = Object.hasOwn(PERIODOS_A_MANO, seccion.codigo);
+        if (aMano && seccion.recurrente === "mensual" && seccion.soloPrimerPeriodo !== true) {
+          seccion.soloPrimerPeriodo = true;
+          cambio = true;
+        }
+      }
     }
   }
   return cambio;

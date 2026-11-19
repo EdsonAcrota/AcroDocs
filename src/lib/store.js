@@ -29,6 +29,7 @@ import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas
 import { tienePermiso, veContrato, PERMISOS, ROLES } from "./permisos.js";
 import {
   migrarV6aV7, fundirCatalogo, fusionarNovedadesCatalogo, aplicarPerfeccionamientoBases,
+  aplicarPrimerPeriodoManual,
   actualizarPerfeccionamientoItems, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia,
 } from "./migracion.js";
 
@@ -198,6 +199,7 @@ const read = () => {
         if (asignarCodigos(data.catalogo)) guardar = true;
         if (fusionarNovedadesCatalogo(data.catalogo)) guardar = true;
         if (aplicarPerfeccionamientoBases(data.catalogo)) guardar = true;
+        if (aplicarPrimerPeriodoManual(data.catalogo)) guardar = true;
         if (actualizarPerfeccionamientoItems(data)) guardar = true;
         if (guardar) {
           try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
@@ -1009,6 +1011,10 @@ const normalizarCatalogo = (entrada) => {
   return cat;
 };
 
+// Valida y deja con su forma un catálogo traído de un archivo (exportado desde otro
+// dispositivo). No guarda nada: el editor lo carga como borrador.
+export const prepararCatalogoImportado = (entrada) => normalizarCatalogo(entrada);
+
 export const getCatalogo = () => {
   const data = read();
   if (!usuarioActual(data)) throw new Error("Inicia sesión para ver el catálogo.");
@@ -1446,24 +1452,26 @@ export const addHitoOpcional = (tramiteId, clave) => {
   });
 };
 
-// ---------- SCTR: agregar meses ----------
+// ---------- Periodos mensuales agregados a mano (SCTR, valorizaciones) ----------
 const MESES_LARGO = ["enero", "febrero", "marzo", "abril", "mayo", "junio", "julio", "agosto", "septiembre", "octubre", "noviembre", "diciembre"];
 const pad2 = (n) => String(n).padStart(2, "0");
 
-export const agregarMesSCTR = (tramiteId) => {
+// Agrega el periodo siguiente de una sección mensual que nace solo con el primero
+// (ver PERIODOS_A_MANO): el mes posterior al último que ya tiene el contrato.
+export const agregarPeriodo = (tramiteId, seccionCodigo) => {
   const data = read();
   const tramite = data.tramites.find((t) => t.id === tramiteId);
   if (!tramite) return null;
-  const sctr = ordenarTareas(
-    data.items.filter((i) => i.tramite_id === tramiteId && String(i.nombre || "").startsWith("SCTR"))
+  const periodos = ordenarTareas(
+    data.items.filter((i) => i.tramite_id === tramiteId && i.seccionCodigo === seccionCodigo)
   );
-  if (sctr.length === 0) return null;
-  const ultimo = sctr[sctr.length - 1];
+  if (periodos.length === 0) return null;
+  const ultimo = periodos[periodos.length - 1];
   const [anio, mes] = String(ultimo.periodo || "2026-01").split("-").map(Number);
   const siguiente = new Date(anio || 2026, (mes || 1) - 1 + 1, 1);
   const periodo = `${siguiente.getFullYear()}-${pad2(siguiente.getMonth() + 1)}`;
   const baseNombre = String(ultimo.nombre).replace(/\s+\d+\s+—.*$/, "");
-  const numeros = sctr
+  const numeros = periodos
     .map((i) => Number(String(i.codigo || "").split(".").pop()))
     .filter((n) => Number.isFinite(n));
   const consecutivo = (numeros.length ? Math.max(...numeros) : 0) + 1;
@@ -1474,6 +1482,8 @@ export const agregarMesSCTR = (tramiteId) => {
     codigo: `${ultimo.seccionCodigo}.${consecutivo}`,
     seccionCodigo: ultimo.seccionCodigo,
     seccionNombre: ultimo.seccionNombre,
+    etapaOrden: ultimo.etapaOrden,
+    seccionOrden: ultimo.seccionOrden,
     tipo: "recurrente",
     plantilla: clave,
     clavePlantilla: clave,
@@ -1487,8 +1497,16 @@ export const agregarMesSCTR = (tramiteId) => {
     periodo,
     fecha_limite: `${periodo}-${pad2(diaLimite)}`,
     norma: ultimo.norma || "",
-    nota: "Mes de SCTR agregado al expediente.",
+    nota: "Mes agregado al expediente.",
   });
+};
+
+// El SCTR de un contrato nuevo (1.2.11 en obra, 2.2.8 en consultoría) es la sección
+// mensual más antigua; se conserva por compatibilidad.
+export const agregarMesSCTR = (tramiteId) => {
+  const tramite = read().tramites.find((t) => t.id === tramiteId);
+  if (!tramite) return null;
+  return agregarPeriodo(tramiteId, ambitoDe(tramite.tipo_objeto) === "obra" ? "1.2.11" : "2.2.8");
 };
 
 // ---------- Cartas fianza ----------
@@ -1550,6 +1568,8 @@ export const guardarConfigFianzas = (tramiteId, config) => {
         nombre: `Renovación de carta fianza ${etiquetas[tipo] || tipo} — ${cfg.etiqueta} ${i + 1}`,
         etapaCodigo: etapaRef?.etapaCodigo || seccionCodigo.split(".").slice(0, 2).join("."),
         etapaNombre: etapaRef?.etapaNombre || "Inicio y aseguramiento",
+        etapaOrden: etapaRef?.etapaOrden,
+        seccionOrden: etapaRef?.seccionOrden,
         seccionCodigo,
         seccionNombre,
         tipo: "recurrente",
