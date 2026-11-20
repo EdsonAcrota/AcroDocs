@@ -156,27 +156,43 @@ const llavePublica = () => process.env.SUPABASE_PUBLISHABLE_KEY || process.env.V
 
 const nombreContrato = (t) => `${t.codigo || ""} - ${t.denominacion || ""}`;
 
-const autenticarReal = async (req) => {
+// Usuario que dice el JWT (el campo `sub`). Solo se lee; la firma y la expiración las valida la base en
+// la consulta siguiente, igual que en cada acceso a los datos desde el navegador.
+const usuarioDelToken = (token) => {
+  try {
+    const { sub, exp, role } = JSON.parse(Buffer.from(token.split(".")[1], "base64url").toString("utf8"));
+    if (!sub || role !== "authenticated") return null;
+    if (exp && exp * 1000 < Date.now()) return null;
+    return sub;
+  } catch {
+    return null;
+  }
+};
+
+export const autenticarReal = async (req) => {
   const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!token) return { estado: 401, error: "Falta iniciar sesión." };
   if (!url() || !llavePublica()) return { estado: 503, error: "Supabase no está configurado en el servidor." };
+  const usuarioId = usuarioDelToken(token);
+  if (!usuarioId) return { estado: 401, error: "La sesión no es válida. Vuelve a ingresar." };
   // Con la clave pública y el JWT del usuario, las reglas RLS de la base valen igual que en el navegador.
+  // No se usa auth.getUser: exige que la sesión exista en el servidor de ingreso y falla si se cerró en otro
+  // dispositivo (el «cerrar sesión» de uno) aunque el token siga vigente y la app siga funcionando.
   const db = createClient(url(), llavePublica(), {
     auth: { persistSession: false, autoRefreshToken: false },
     global: { headers: { Authorization: `Bearer ${token}` } },
   });
-  const { data, error } = await db.auth.getUser(token);
-  if (error || !data?.user) {
-    if (!error || error.status === 401 || error.status === 403) return { estado: 401, error: "La sesión no es válida. Vuelve a ingresar." };
-    console.error("auth.getUser falló:", error.status, error.message);
-    return { estado: 500, error: "No se pudo verificar tu sesión." };
+  const { data: perfil, error: errorPerfil, status } = await db.from("perfiles").select("id, activo").eq("id", usuarioId).maybeSingle();
+  if (errorPerfil) {
+    // La base rechaza un token vencido o falso con 401; cualquier otro fallo es del servidor.
+    if (status === 401 || status === 403 || /jwt/i.test(errorPerfil.message || "")) return { estado: 401, error: "La sesión no es válida. Vuelve a ingresar." };
+    console.error("perfil falló:", status, errorPerfil.code, errorPerfil.message);
+    return { estado: 500, error: "No se pudo verificar tu usuario." };
   }
-  const { data: perfil, error: errorPerfil } = await db.from("perfiles").select("id, activo").eq("id", data.user.id).maybeSingle();
-  if (errorPerfil) return { estado: 500, error: "No se pudo verificar tu usuario." };
   if (!perfil?.activo) return { estado: 403, error: "Tu usuario está desactivado." };
 
   return {
-    usuario: { id: data.user.id },
+    usuario: { id: usuarioId },
     tienePermiso: async (p) => {
       const { data: tiene, error: e } = await db.rpc("tiene_permiso", { p });
       if (e) throw e;

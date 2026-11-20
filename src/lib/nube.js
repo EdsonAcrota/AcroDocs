@@ -318,7 +318,9 @@ export const haySesion = async () => {
 
 export const cerrarSesion = async () => {
   try { await esperarGuardado(); } catch { /* se cierra igual */ }
-  await supabase.auth.signOut();
+  // Solo este dispositivo: el cierre «global» de Supabase tumba también la sesión del celular o de la PC
+  // del mismo usuario, que seguiría viendo la app pero ya no podría subir ni descargar archivos.
+  await supabase.auth.signOut({ scope: "local" });
   base = null;
   datos = null;
   intentos = 0;
