@@ -417,7 +417,7 @@ export default function TramiteDetalle() {
       let subido = null;
       if (procArchivo) {
         subido = await guardarArchivo(procArchivo, {
-          tramiteId: id, tareaId: proc.hitoId, tipoDoc: "Movimiento de trámite", nombre: procArchivo.name,
+          tramiteId: id, tareaId: proc.hitoId, tipoDoc: "Movimiento de trámite", nombre: procArchivo.name, permiso: "registrar",
         });
       }
       agregarMovimientoProcedimiento(proc.id, {
@@ -734,7 +734,7 @@ export default function TramiteDetalle() {
     event.target.value = "";
     if (!permiso.subir || !file || !tarea) return;
     if (file.size > 30 * 1024 * 1024) {
-      setErrorArchivo("El archivo supera el límite de 30 MB para el demo.");
+      setErrorArchivo("El archivo supera el límite de 30 MB.");
       return;
     }
     setErrorArchivo("");
@@ -743,6 +743,7 @@ export default function TramiteDetalle() {
       const meta = await guardarArchivo(file, {
         tramiteId: id,
         tareaId: tarea.id,
+        permiso: "subir",
         tipoDoc: tipoDoc || "Otros",
         nombre: nombrePorEtiqueta(tipoDoc || "Documento", file.name),
       });
@@ -773,7 +774,7 @@ export default function TramiteDetalle() {
     event.target.value = "";
     if (!permiso.reemplazar || !file || !tarea) return;
     if (file.size > 30 * 1024 * 1024) {
-      setErrorArchivo("El archivo supera el límite de 30 MB para el demo.");
+      setErrorArchivo("El archivo supera el límite de 30 MB.");
       return;
     }
     setErrorArchivo("");
@@ -782,6 +783,7 @@ export default function TramiteDetalle() {
       const meta = await guardarArchivo(file, {
         tramiteId: id,
         tareaId: tarea.id,
+        permiso: "reemplazar",
         tipoDoc: doc.tipoDoc || "Otros",
         nombre: nombrePorEtiqueta(doc.tipoDoc || "Documento", file.name),
       });

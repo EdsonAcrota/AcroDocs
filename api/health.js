@@ -1,3 +1,5 @@
+import { configurado } from "./_drive.js";
+
 const url = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
 const llaveServicio = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
@@ -7,6 +9,7 @@ export default async function handler(req, res) {
     ok: true,
     runtime: "node",
     supabase: Boolean(url && llaveServicio),
+    drive: configurado(),
     nube: Boolean(process.env.VITE_SUPABASE_URL && process.env.VITE_SUPABASE_PUBLISHABLE_KEY),
   });
 }

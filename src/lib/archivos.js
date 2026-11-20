@@ -1,8 +1,11 @@
-// Almacenamiento local de archivos para el demo.
-// Los metadatos (nombre, tamaño, tipo) viven en localStorage junto con el
-// expediente; el contenido binario se guarda en IndexedDB para no reventar
-// la cuota de localStorage. En producción esto se reemplaza por Supabase
-// Storage o S3, conservando los mismos metadatos.
+// Almacenamiento de archivos adjuntos. Dos modos, con la misma interfaz:
+// - Modo local (demo y pruebas): los metadatos (nombre, tamaño, tipo) viven en localStorage junto con
+//   el expediente y el contenido binario en IndexedDB, para no reventar la cuota de localStorage.
+// - Modo nube (Supabase): el contenido vive en Google Drive (ver drive.js y api/archivos.js) y
+//   `archivoId` es el identificador del archivo en Drive. Supabase guarda solo los metadatos.
+import { MODO_NUBE } from "./supabase.js";
+import { reducirFoto } from "./imagen.js";
+import { subirADrive, descargarDeDrive, eliminarDeDrive } from "./drive.js";
 
 const DB_NAME = "acrodocs_archivos";
 const STORE = "archivos";
@@ -58,8 +61,11 @@ const fechaLocal = () => {
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 };
 
-export const guardarArchivo = async (file, meta = {}) => {
-  if (!file) throw new Error("No se seleccionó ningún archivo.");
+export const guardarArchivo = async (original, meta = {}) => {
+  if (!original) throw new Error("No se seleccionó ningún archivo.");
+  // Las fotos de cámara se reducen antes de guardarlas (en el celular pueden agotar la memoria).
+  const file = await reducirFoto(original);
+  if (MODO_NUBE) return subirADrive(file, meta);
   const id = uid();
   const registro = {
     id,
@@ -96,7 +102,23 @@ export const obtenerArchivo = async (id) => {
 
 export const eliminarArchivo = async (id) => {
   if (!id) return;
+  if (MODO_NUBE) return eliminarDeDrive(id);
   await transaccion("readwrite", (store) => store.delete(id));
+};
+
+// Contenido de un archivo como { blob, nombre }, de IndexedDB o de Drive según el modo.
+// Devuelve null si ya no existe.
+const leerArchivo = async (id) => {
+  if (MODO_NUBE) {
+    try {
+      return await descargarDeDrive(id);
+    } catch (error) {
+      if (error.estado === 404) return null;
+      throw error;
+    }
+  }
+  const registro = await obtenerArchivo(id);
+  return registro?.blob ? { blob: registro.blob, nombre: registro.nombre } : null;
 };
 
 const descargarBlob = (blob, nombre) => {
@@ -110,10 +132,12 @@ const descargarBlob = (blob, nombre) => {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 };
 
+const DONDE = MODO_NUBE ? "en Drive" : "en este navegador";
+
 export const descargarArchivo = async (id, nombreSugerido) => {
-  const registro = await obtenerArchivo(id);
-  if (!registro?.blob) throw new Error("El archivo ya no está disponible en este navegador.");
-  descargarBlob(registro.blob, nombreSugerido || registro.nombre || "documento");
+  const archivo = await leerArchivo(id);
+  if (!archivo) throw new Error(`El archivo ya no está disponible ${DONDE}.`);
+  descargarBlob(archivo.blob, nombreSugerido || archivo.nombre || "documento");
 };
 
 export const descargarTexto = (texto, nombre, tipo = "application/json;charset=utf-8") => {
@@ -155,10 +179,10 @@ export const descargarComoZip = async (docs = [], nombreZip = "documentos.zip", 
   let offset = 0;
 
   for (const doc of listas) {
-    const registro = await obtenerArchivo(doc.archivoId);
-    if (!registro?.blob) continue;
-    const nombre = `${prefijo}${doc.nombre || registro.nombre || "documento"}`;
-    const datos = new Uint8Array(await registro.blob.arrayBuffer());
+    const archivo = await leerArchivo(doc.archivoId);
+    if (!archivo) continue;
+    const nombre = `${prefijo}${doc.nombre || archivo.nombre || "documento"}`;
+    const datos = new Uint8Array(await archivo.blob.arrayBuffer());
     const crc = crc32(datos);
     const nombreBytes = new TextEncoder().encode(nombre);
     const cabecera = new Uint8Array(30 + nombreBytes.length);
@@ -201,7 +225,7 @@ export const descargarComoZip = async (docs = [], nombreZip = "documentos.zip", 
     offset += cabecera.length + datos.length;
   }
 
-  if (!centrales.length) throw new Error("Los archivos ya no están disponibles en este navegador.");
+  if (!centrales.length) throw new Error(`Los archivos ya no están disponibles ${DONDE}.`);
   const tamanoCentral = centrales.reduce((n, c) => n + c.length, 0);
   const fin = new Uint8Array(22);
   const vf = new DataView(fin.buffer);

@@ -111,9 +111,10 @@ queda lo estructurado: usuarios, catálogo, contratos, hitos, movimientos, trám
   navegador a Google (con una sesión que crea el servidor), porque las funciones de Vercel tienen un límite
   de tamaño por petición. La descarga la sirve el servidor tras verificar el permiso; se valida con un
   archivo grande antes de comprometerse.
-- **Decisión pendiente, no bloquea la Fase 1:** si la cuenta es un Gmail personal (conexión por OAuth con la
-  cuenta de Edson) o Google Workspace de la empresa (cuenta de servicio con una unidad compartida, más
-  estable).
+- **Decidido (2026-11-20):** la cuenta es un Gmail personal de Edson, así que la conexión es por OAuth con su
+  cuenta (token de actualización con alcance `drive.file`, app de Google Cloud «En producción»). Un Workspace
+  con cuenta de servicio y unidad compartida sería más estable si la empresa lo adopta. Implementación y
+  configuración: sección «Archivos en Google Drive» del README.
 - Mientras tanto, los archivos ya subidos siguen en el navegador donde se subieron: no limpiar sus datos.
 
 ## Restricciones

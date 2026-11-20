@@ -219,7 +219,46 @@ Framework **Vite**, build `npm run build`, salida `dist` (`vercel.json` ya trae 
 - Al entrar, `src/lib/nube.js` carga a memoria todo lo que el usuario puede ver, con la misma forma del estado local, y `store.js` sigue funcionando igual. Cada cambio se compara con la última copia del servidor y se envía solo lo que cambió (altas, cambios y bajas por `id`). Un fallo de guardado muestra un aviso con "Reintentar" y "Recargar datos". Al volver a la pestaña se traen los cambios de otros usuarios.
 - Quién puede leer y escribir cada tabla lo decide la base: `ve_contrato` para leer y el permiso que corresponde para escribir. Las reglas finas dentro de una tabla (qué campo toca cada permiso) siguen en la app. Si dos personas editan la misma fila a la vez, gana la última.
 - Los usuarios los crea el gerente desde Configuración (`api/usuarios.js`, única pieza que usa la clave de servicio). Reciben una contraseña temporal y deben cambiarla al entrar; si la olvidan, el gerente la restablece.
-- **Los archivos adjuntos siguen en el navegador donde se subieron** hasta la Fase 2 (Google Drive).
+- **Los archivos adjuntos van a Google Drive** (sección siguiente). Sin las variables de Google, subir un archivo en modo nube avisa que Drive no está configurado.
+
+## Archivos en Google Drive (Fase 2)
+
+En modo nube, los documentos y las fotos de hitos, trámites y línea de tiempo se guardan en **tu Google Drive**, en `AcroDocs/{contrato}/{etapa}/{hito}/` (los que no tienen hito van a `AcroDocs/{contrato}/General/`). Supabase guarda solo los datos del documento y el identificador del archivo en Drive (`archivoId`). En modo local (sin variables de nube) todo sigue en IndexedDB.
+
+- **Los usuarios de AcroDocs no entran a Drive.** El servidor (`api/archivos.js`) se conecta con tu cuenta y, antes de cada acción, comprueba con la sesión del usuario (reglas RLS de Supabase) que tenga el permiso (`subir`, `reemplazar`, `registrar` o `descargar`) y que vea el contrato del archivo. Un usuario sin acceso al contrato recibe un rechazo aunque conozca el identificador.
+- **Subida:** el servidor crea la carpeta y una *sesión de subida reanudable* y el navegador sube **directo a Google** (Vercel limita las peticiones a 4,5 MB). Si el navegador no puede subir directo (red o CORS), la app sube por trozos de 3 MiB a través del servidor. Al terminar, el servidor confirma que el archivo llegó completo.
+- **Descarga:** la sirve el servidor por trozos de 4 MiB (Vercel limita las respuestas a 4,5 MB) y la app los une. Hasta 30 MB por archivo.
+- **Fotos:** al tomar o elegir una foto JPEG, el navegador la reduce a 1600 px y la guarda como JPEG antes de subirla (evita «Memoria insuficiente» en celulares modestos). Nunca pasa de **2 MB**: si aun así pesara más, baja la calidad y, si hace falta, el tamaño. Una foto que ya cabe en 2 MB no se toca.
+- **Eliminar** manda el archivo a la **papelera de Drive** (se recupera durante 30 días).
+- La conexión usa el alcance `drive.file`: AcroDocs solo ve lo que él mismo crea, nunca el resto de tu Drive. El espacio es el de tu cuenta (15 GB en un Gmail gratuito).
+
+### Configurar Google (una sola vez, unos 15 minutos)
+
+1. Entra a <https://console.cloud.google.com> con la cuenta de Gmail que guardará los archivos. **Crear proyecto** → nombre `AcroDocs`.
+2. **APIs y servicios → Biblioteca** → busca **Google Drive API** → **Habilitar**.
+3. **Google Auth Platform** (o **APIs y servicios → Pantalla de consentimiento de OAuth**) → **Comenzar**:
+   - Nombre de la app `AcroDocs`; correo de asistencia y de contacto: el tuyo.
+   - Público: **Externo**.
+   - **Acceso a los datos → Agregar o quitar permisos** → marca `…/auth/drive.file` («Ver, editar, crear y borrar solo los archivos de Google Drive que utilizas con esta app») → Guardar.
+   - **Público → Publicar la aplicación** → deja el estado en **En producción**. **Es obligatorio:** en modo «Prueba» el token caduca a los 7 días y los archivos dejarían de subirse. `drive.file` no es un permiso sensible, así que no pide revisión de Google.
+4. **Clientes → Crear cliente** → tipo **Aplicación de escritorio** → nombre `AcroDocs servidor`. Deja abierta la ventana con el **ID de cliente** y el **secreto** (no los pegues en ningún chat).
+5. En una terminal, dentro de esta carpeta:
+   ```bash
+   node scripts/google-token.mjs
+   ```
+   Pega el ID de cliente y el secreto, se abrirá el navegador: elige tu cuenta y acepta. Si Google avisa «no ha verificado esta aplicación», pulsa **Avanzado → Ir a AcroDocs**. La terminal muestra el `GOOGLE_REFRESH_TOKEN` (no se guarda en ningún archivo).
+6. **Vercel → Settings → Environment Variables** (entorno de la rama `feature/nube`, o Production cuando se promueva). Crea las tres y marca **Sensitive**:
+
+   | Variable | Valor |
+   |---|---|
+   | `GOOGLE_CLIENT_ID` | ID de cliente |
+   | `GOOGLE_CLIENT_SECRET` | secreto del cliente |
+   | `GOOGLE_REFRESH_TOKEN` | el token que mostró la terminal |
+
+   Opcional: `GOOGLE_DRIVE_CARPETA_RAIZ` (por defecto `AcroDocs`). Después de cambiar variables hay que **redesplegar**.
+7. Comprueba `https://TU-DOMINIO.vercel.app/api/health`: debe decir `drive: true`. Luego sube un archivo y una foto a un hito desde el celular y revisa que aparezcan en Drive en la carpeta correcta.
+
+**Si dejan de subirse archivos** con «Google rechazó la conexión (invalid_grant)»: el permiso se revocó (por ejemplo, desde <https://myaccount.google.com/permissions>) o lleva más de 6 meses sin usarse. Repite el paso 5 y actualiza `GOOGLE_REFRESH_TOKEN`.
 
 ## Estructura
 
@@ -234,12 +273,15 @@ src/
   lib/cargos.js              tipos de documento del flujo (para movimientos)
   lib/migracion.js           migración de v6 a v7
   lib/store.js               persistencia local, permisos, historial, trámites, movimientos, alertas
-  lib/archivos.js            IndexedDB: guardar, descargar y eliminar archivos
+  lib/archivos.js            guardar, descargar y eliminar archivos (IndexedDB en local, Drive en la nube)
+  lib/drive.js               cliente de /api/archivos: subida directa a Google, plan B por trozos, descarga por trozos
+  lib/imagen.js              reduce las fotos del celular (≤ 1600 px, JPEG) antes de subirlas
   lib/supabase.js            cliente de Supabase y bandera de modo nube
   lib/nube.js                carga, diferencias por id, guardado y alta de usuarios en la nube
   components/                línea de tiempo, usuarios y permisos, editor de plantilla, historial
   pages/                     Login, Panel, Tramites, TramiteDetalle, Catalogo, Configuracion
-api/                         health y usuarios (funciones serverless de Vercel)
+api/                         health, usuarios y archivos (funciones serverless de Vercel); _drive.js es el cliente de Drive
+scripts/google-token.mjs     obtiene el token de actualización de Google (se usa una sola vez)
 supabase/                    migraciones SQL (esquema, RLS) y prueba de la matriz de permisos
 docs/superpowers/            diseño y plan de implementación
 schema.sql                   esquema relacional anterior (referencia; no se usa)

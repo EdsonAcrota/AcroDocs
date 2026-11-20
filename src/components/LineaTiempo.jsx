@@ -91,7 +91,7 @@ export default function LineaTiempo({ item, permiso, onCambio }) {
     let subido = null;
     try {
       if (archivo) {
-        subido = await guardarArchivo(archivo, { tramiteId: item.tramite_id, tareaId: item.id, tipoDoc: "Movimiento", nombre: archivo.name });
+        subido = await guardarArchivo(archivo, { tramiteId: item.tramite_id, tareaId: item.id, tipoDoc: "Movimiento", nombre: archivo.name, permiso: "registrar" });
       }
       try {
         registrarMovimiento(item.id, { ...formulario, archivoId: subido?.archivoId, archivoNombre: subido?.nombre });
