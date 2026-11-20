@@ -23,8 +23,15 @@ const autorizar = async (req) => {
   const token = String(req.headers.authorization || "").replace(/^Bearer\s+/i, "");
   if (!token) return { estado: 401, error: "Falta iniciar sesión." };
   const { data, error } = await admin.auth.getUser(token);
-  if (error || !data?.user) return { estado: 401, error: "La sesión no es válida. Vuelve a ingresar." };
-  const { data: perfil } = await admin.from("perfiles").select("id, rol, activo").eq("id", data.user.id).maybeSingle();
+  if (error || !data?.user) {
+    console.error("auth.getUser falló:", error?.status, error?.name, error?.message);
+    // 401/403 es el token del usuario; cualquier otro fallo es del servidor (p. ej. clave de servicio mal copiada).
+    if (!error || error.status === 401 || error.status === 403) return { estado: 401, error: "La sesión no es válida. Vuelve a ingresar." };
+    return { estado: 500, error: "No se pudo verificar tu sesión. Revisa que SUPABASE_SERVICE_ROLE_KEY en Vercel esté completa y sea la clave secreta." };
+  }
+  const { data: perfil, error: errorPerfil } = await admin.from("perfiles").select("id, rol, activo").eq("id", data.user.id).maybeSingle();
+  // Un fallo de la consulta casi siempre es la clave de servicio mal puesta (por ejemplo, la publicable).
+  if (errorPerfil) return { estado: 500, error: "No se pudo verificar tu usuario. Revisa que SUPABASE_SERVICE_ROLE_KEY en Vercel sea la clave secreta de Supabase." };
   if (!perfil?.activo) return { estado: 403, error: "Tu usuario está desactivado." };
   if (perfil.rol !== "gerente") {
     const { data: fila } = await admin.from("permisos_roles").select("permisos").eq("rol", perfil.rol).maybeSingle();
