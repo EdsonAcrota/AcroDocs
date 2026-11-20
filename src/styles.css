@@ -743,3 +743,7 @@ input[readonly] { background: var(--sheet-2); color: var(--muted); }
   .tabla.tabla-tarjetas td:nth-child(n) { gap: 7px; }
   .tabla.tabla-tarjetas td:nth-child(n)::before { flex-basis: 68px; }
 }
+
+/* Aviso de guardado en modo nube */
+.barra-guardado { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+.barra-guardado-acciones { display: flex; gap: 8px; flex-wrap: wrap; }

@@ -184,53 +184,42 @@ location.reload();
 
 El demo incluye dos contratos (`DEMO-OC-2026-001` y `DEMO-CA-2026-002`), hitos recurrentes y un trámite eventual de cambio de personal.
 
-## Despliegue con Vercel + Supabase
+## Despliegue con Vercel + Supabase (modo nube)
 
-La app sigue funcionando en local sin configuración. Para desplegarla en modo nube:
+Sin configuración la app funciona en **modo local** (demo, datos en el navegador). Con las dos variables `VITE_` de abajo pasa a **modo nube**: ingreso real con Supabase Auth, datos compartidos entre dispositivos y permisos que hace cumplir la base de datos (RLS). Diseño: `docs/superpowers/specs/2026-11-20-supabase-fase1-design.md`.
 
 ### 1. Supabase
 
-1. Crea un proyecto en [Supabase](https://supabase.com).
-2. Abre **SQL Editor** y ejecuta todo `schema.sql`. Ese archivo crea las tablas del modelo (`tramites`, `tramite_items`, `procedimientos`, `movimientos`, `historial`, adjuntos, usuarios, permisos…), la tabla `app_states`, el bucket `adjuntos` y las políticas del service role.
-3. En **Project Settings → API** copia:
-   - `Project URL`
-   - `anon key`
-   - `service_role key` (solo servidor; **nunca** la pongas en variables `VITE_*`).
+1. Crea el proyecto y aplica en orden `supabase/migrations/0001…0004` (SQL Editor o `apply_migration`). Crean las tablas (un documento por fila), las funciones `es_gerente`, `tiene_permiso` y `ve_contrato`, la matriz inicial de permisos y las reglas RLS.
+2. `supabase/tests/rls_matriz.sql` comprueba la matriz rol × tabla con usuarios de prueba y se deshace sola (debe terminar en `RESULTADO: … 0 fallos`).
+3. En **Authentication → Sign In / Providers** desactiva el registro público (los usuarios los crea el gerente).
+4. Crea el primer gerente: **Authentication → Users → Add user** (correo y contraseña) y luego agrégale su perfil:
+   ```sql
+   insert into public.perfiles (id, nombre, email, rol)
+   select id, 'Nombre del gerente', email, 'gerente' from auth.users where email = 'correo@del.gerente';
+   ```
 
-### 2. Variables de entorno
+### 2. Variables de entorno (Vercel → Settings → Environment Variables)
 
-En Vercel (**Settings → Environment Variables**) configura:
+| Variable | Valor | Dónde va |
+|---|---|---|
+| `VITE_SUPABASE_URL` | Project URL | navegador (pública) |
+| `VITE_SUPABASE_PUBLISHABLE_KEY` | clave publicable (`sb_publishable_…`) | navegador (pública) |
+| `SUPABASE_URL` | Project URL | solo servidor |
+| `SUPABASE_SERVICE_ROLE_KEY` | clave de servicio | solo servidor; **nunca** con prefijo `VITE_` |
 
-| Variable | Valor |
-|---|---|
-| `SUPABASE_URL` | Project URL |
-| `SUPABASE_SERVICE_ROLE_KEY` | service_role key |
-| `VITE_SUPABASE_URL` | Project URL |
-| `VITE_SUPABASE_ANON_KEY` | anon key |
-| `APP_KEY` | Un secreto largo y aleatorio |
-| `VITE_APP_KEY` | El **mismo** secreto que `APP_KEY` |
-| `VITE_CLOUD_SYNC` | `true` |
-
-Para probar en local, copia `.env.example` a `.env.local` con los mismos valores.
+Para probar en local copia `.env.example` a `.env.local`. Las pruebas (`npx vitest run`) siempre corren en modo local.
 
 ### 3. Vercel
 
-1. Sube el proyecto a GitHub/GitLab/Bitbucket.
-2. En Vercel: **Add New → Project** y selecciona el repositorio.
-3. Framework: **Vite**. Build: `npm run build`. Output: `dist`. `vercel.json` ya incluye los rewrites para React Router.
-4. Deploy.
+Framework **Vite**, build `npm run build`, salida `dist` (`vercel.json` ya trae los rewrites). `https://TU-DOMINIO.vercel.app/api/health` debe responder `ok: true`, `supabase: true` (servidor listo) y `nube: true` (páginas en modo nube).
 
-Verifica `https://TU-DOMINIO.vercel.app/api/health`: debe responder `ok: true`, `supabase: true` y `sync: true`.
+### Cómo funciona
 
-### Cómo funciona la sincronización
-
-- Con `VITE_CLOUD_SYNC=true`, al abrir la app se descarga el estado desde `/api/state` y se coloca en `localStorage` antes de renderizar.
-- Cada cambio guarda el estado local y, con un pequeño retardo, lo envía a `app_states` mediante `/api/state` (usa `APP_KEY` como secreto compartido).
-- Las APIs usan el **service role** de Supabase; la clave nunca llega al navegador.
-- Los archivos adjuntos siguen en IndexedDB por ahora. `/api/files` ya permite subir/descargar al bucket `adjuntos` y servirá para migrarlos después.
-- El inicio de sesión y los roles siguen siendo locales; Supabase Auth no está integrado todavía.
-
-> Para un despliegue multiusuario real, el siguiente paso es sustituir la sesión local por Supabase Auth y reflejar los roles en RLS. La app ya tiene las tablas `usuarios` y `permisos_roles` preparadas.
+- Al entrar, `src/lib/nube.js` carga a memoria todo lo que el usuario puede ver, con la misma forma del estado local, y `store.js` sigue funcionando igual. Cada cambio se compara con la última copia del servidor y se envía solo lo que cambió (altas, cambios y bajas por `id`). Un fallo de guardado muestra un aviso con "Reintentar" y "Recargar datos". Al volver a la pestaña se traen los cambios de otros usuarios.
+- Quién puede leer y escribir cada tabla lo decide la base: `ve_contrato` para leer y el permiso que corresponde para escribir. Las reglas finas dentro de una tabla (qué campo toca cada permiso) siguen en la app. Si dos personas editan la misma fila a la vez, gana la última.
+- Los usuarios los crea el gerente desde Configuración (`api/usuarios.js`, única pieza que usa la clave de servicio). Reciben una contraseña temporal y deben cambiarla al entrar; si la olvidan, el gerente la restablece.
+- **Los archivos adjuntos siguen en el navegador donde se subieron** hasta la Fase 2 (Google Drive).
 
 ## Estructura
 
@@ -246,12 +235,14 @@ src/
   lib/migracion.js           migración de v6 a v7
   lib/store.js               persistencia local, permisos, historial, trámites, movimientos, alertas
   lib/archivos.js            IndexedDB: guardar, descargar y eliminar archivos
-  lib/cloud.js               sincronización opcional con Supabase (VITE_CLOUD_SYNC)
+  lib/supabase.js            cliente de Supabase y bandera de modo nube
+  lib/nube.js                carga, diferencias por id, guardado y alta de usuarios en la nube
   components/                línea de tiempo, usuarios y permisos, editor de plantilla, historial
   pages/                     Login, Panel, Tramites, TramiteDetalle, Catalogo, Configuracion
-api/                         health, state y files (funciones serverless de Vercel)
+api/                         health y usuarios (funciones serverless de Vercel)
+supabase/                    migraciones SQL (esquema, RLS) y prueba de la matriz de permisos
 docs/superpowers/            diseño y plan de implementación
-schema.sql                   esquema PostgreSQL/Supabase (incluye app_states y bucket)
+schema.sql                   esquema relacional anterior (referencia; no se usa)
 vercel.json                  build, output y rewrites para Vercel
 .env.example                 variables de entorno de ejemplo
 iniciar-demo.bat             lanzador local

@@ -24,7 +24,8 @@ import {
   AMBITOS,
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
-import { CLOUD_SYNC, pushCloudState } from "./cloud.js";
+import { MODO_NUBE } from "./supabase.js";
+import * as nube from "./nube.js";
 import { calcularFlujo, instanciarPasos } from "./flujo.js";
 import { cargosVisibles, TIPOS_DOCUMENTO } from "./cargos.js";
 import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas.js";
@@ -171,40 +172,57 @@ const seed = () => {
 };
 
 let memoria = null;
+// En modo nube, copia (texto JSON) de lo que el usuario puede ver. Es la "caché en
+// memoria": `read()` la devuelve y `write()` la reemplaza y envía los cambios a Supabase.
+let estadoNube = null;
+
+// Estado vacío para antes de ingresar en modo nube: no toca el almacenamiento local.
+const datosSinSesion = () => ({
+  version: 7, session: null, usuarios: [], permisosRoles: {}, tramites: [], items: [], movimientos: [],
+  procedimientos: [], cargos: [], historial: [], configFianzas: {}, feriados: [], empresa: empresaVacia(),
+});
+
+// Completa y actualiza un estado v7 (listas que faltan, catálogo, novedades). Devuelve
+// true si cambió algo que conviene guardar. Lo usan la lectura local y la carga de la nube.
+const normalizarDatos = (data) => {
+  if (!Array.isArray(data.feriados)) data.feriados = [...FERIADOS_2026];
+  if (!data.configFianzas || typeof data.configFianzas !== "object") data.configFianzas = {};
+  if (!Array.isArray(data.usuarios)) data.usuarios = copiarUsuariosDemo();
+  if (!data.permisosRoles || typeof data.permisosRoles !== "object") data.permisosRoles = copiarMatrizInicial();
+  if (!Array.isArray(data.historial)) data.historial = [];
+  if (!data.empresa || typeof data.empresa !== "object") data.empresa = empresaVacia();
+  if (!Array.isArray(data.movimientos)) data.movimientos = [];
+  if (!Array.isArray(data.cargos)) data.cargos = [];
+  if (!Array.isArray(data.procedimientos)) data.procedimientos = [];
+  // Un v7 guardado antes del catálogo almacenado: se funde una vez y se
+  // guarda enseguida, para que los ids del catálogo no cambien entre lecturas.
+  let guardar = false;
+  if (!data.catalogo || typeof data.catalogo !== "object") {
+    data.catalogo = fundirCatalogo(data.plantillasDocs, data.catalogoHitos);
+    delete data.plantillasDocs;
+    delete data.catalogoHitos;
+    guardar = true;
+  }
+  // Un catálogo guardado antes de que los hitos llevaran `codigo`: se les
+  // da el código que ya tenían por regla, una sola vez.
+  if (asignarCodigos(data.catalogo)) guardar = true;
+  if (fusionarNovedadesCatalogo(data.catalogo)) guardar = true;
+  if (aplicarPerfeccionamientoBases(data.catalogo)) guardar = true;
+  if (aplicarPrimerPeriodoManual(data.catalogo)) guardar = true;
+  if (actualizarPerfeccionamientoItems(data)) guardar = true;
+  if (renombrarNotaEventuales(data)) guardar = true;
+  return guardar;
+};
 
 const read = () => {
+  if (estadoNube !== null) return JSON.parse(estadoNube);
+  if (MODO_NUBE) return datosSinSesion();
   try {
     const raw = localStorage.getItem(KEY);
     if (raw) {
       const data = JSON.parse(raw);
       if (Number(data.version) >= 7) {
-        if (!Array.isArray(data.feriados)) data.feriados = [...FERIADOS_2026];
-        if (!data.configFianzas || typeof data.configFianzas !== "object") data.configFianzas = {};
-        if (!Array.isArray(data.usuarios)) data.usuarios = copiarUsuariosDemo();
-        if (!data.permisosRoles || typeof data.permisosRoles !== "object") data.permisosRoles = copiarMatrizInicial();
-        if (!Array.isArray(data.historial)) data.historial = [];
-        if (!data.empresa || typeof data.empresa !== "object") data.empresa = empresaVacia();
-        if (!Array.isArray(data.movimientos)) data.movimientos = [];
-        if (!Array.isArray(data.cargos)) data.cargos = [];
-        if (!Array.isArray(data.procedimientos)) data.procedimientos = [];
-        // Un v7 guardado antes del catálogo almacenado: se funde una vez y se
-        // guarda enseguida, para que los ids del catálogo no cambien entre lecturas.
-        let guardar = false;
-        if (!data.catalogo || typeof data.catalogo !== "object") {
-          data.catalogo = fundirCatalogo(data.plantillasDocs, data.catalogoHitos);
-          delete data.plantillasDocs;
-          delete data.catalogoHitos;
-          guardar = true;
-        }
-        // Un catálogo guardado antes de que los hitos llevaran `codigo`: se les
-        // da el código que ya tenían por regla, una sola vez.
-        if (asignarCodigos(data.catalogo)) guardar = true;
-        if (fusionarNovedadesCatalogo(data.catalogo)) guardar = true;
-        if (aplicarPerfeccionamientoBases(data.catalogo)) guardar = true;
-        if (aplicarPrimerPeriodoManual(data.catalogo)) guardar = true;
-        if (actualizarPerfeccionamientoItems(data)) guardar = true;
-        if (renombrarNotaEventuales(data)) guardar = true;
-        if (guardar) {
+        if (normalizarDatos(data)) {
           try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
         }
         return data;
@@ -229,17 +247,52 @@ const read = () => {
   return data;
 };
 
-let colaSync = null;
-
 const write = (data) => {
+  if (estadoNube !== null) {
+    estadoNube = JSON.stringify(data);
+    nube.guardar(data);
+    return data;
+  }
   memoria = data;
   try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
-  if (CLOUD_SYNC) {
-    if (colaSync) clearTimeout(colaSync);
-    colaSync = setTimeout(() => pushCloudState(data).catch(() => {}), 800);
-  }
   return data;
 };
+
+// ---------- Modo nube ----------
+// Deja los datos cargados desde Supabase como estado de la app. El gerente guarda de
+// inmediato lo que falte (catálogo inicial, novedades del catálogo); los demás usuarios
+// lo usan en memoria sin escribirlo, porque la base no se lo permitiría.
+const activarNube = (raw) => {
+  normalizarDatos(raw);
+  estadoNube = JSON.stringify(raw);
+  if (usuarioActual(raw)?.rol === "gerente") nube.guardar(raw);
+  else nube.adoptar(raw, ["config"]);
+};
+
+export const iniciarNube = (raw) => {
+  activarNube(raw);
+  return getSession();
+};
+
+// Vuelve a leer del servidor. Devuelve true si los datos cambiaron (la pantalla debe redibujarse).
+export const recargarNube = async () => {
+  const raw = await nube.cargar();
+  if (!raw) return false;
+  const actual = estadoNube === null ? null : JSON.parse(estadoNube);
+  const copia = JSON.parse(JSON.stringify(raw));
+  normalizarDatos(copia);
+  if (actual && nube.mismoContenido(actual, copia)) return false;
+  activarNube(raw);
+  return true;
+};
+
+export const hayNube = () => estadoNube !== null;
+
+// Tras ingresar (o restaurar la sesión guardada): carga los datos y devuelve la ficha de sesión.
+export const entrarNube = async () => iniciarNube(await nube.cargar());
+
+// Cierra la sesión de Supabase cuando la carga falló y todavía no hay datos en memoria.
+export const abandonarNube = () => nube.cerrarSesion();
 
 // ---------- Configuración ----------
 export const getFeriados = () => [...(read().feriados || [])].sort();
@@ -276,6 +329,7 @@ const fichaDeSesion = (usuario) => ({
   email: usuario.email,
   rol: usuario.rol,
   contratos: [...(usuario.contratos || [])],
+  cambiarClave: Boolean(usuario.cambiarClave),
 });
 
 const puedeEn = (data, permiso, tramiteId) =>
@@ -313,6 +367,11 @@ export const loginDemo = (email, password) => {
 };
 
 export const logout = () => {
+  if (MODO_NUBE) {
+    estadoNube = null;
+    nube.cerrarSesion();
+    return;
+  }
   const data = read();
   data.session = null;
   write(data);

@@ -1,8 +1,10 @@
 import React, { useState } from "react";
 import {
   getSession, listarUsuarios, crearUsuario, actualizarUsuario,
-  getPermisosRoles, setPermisoRol, listarContratosAsignables,
+  getPermisosRoles, setPermisoRol, listarContratosAsignables, recargarNube, registrarHistorial,
 } from "../lib/store.js";
+import { MODO_NUBE } from "../lib/supabase.js";
+import { crearUsuario as crearUsuarioNube, restablecerClave } from "../lib/nube.js";
 import { PERMISOS, ROLES } from "../lib/permisos.js";
 
 // Permisos agrupados como en §5.1, respetando el orden del catálogo.
@@ -67,15 +69,36 @@ export default function UsuariosPermisos({ onCambio }) {
     setForm({ ...form, contratos: marcado ? form.contratos.filter((c) => c !== id) : [...form.contratos, id] });
   };
 
-  const guardar = (e) => {
+  const guardar = async (e) => {
     e.preventDefault();
     try {
       if (form.id) {
-        const cambios = { nombre: form.nombre, email: form.email, rol: form.rol, contratos: form.contratos, soloAsignados: form.soloAsignados };
-        // En edición, dejar la contraseña vacía conserva la actual.
-        if (form.password !== "") cambios.password = form.password;
+        // En la nube el correo no se cambia y la contraseña se restablece por el servidor.
+        const cambios = { nombre: form.nombre, rol: form.rol, contratos: form.contratos, soloAsignados: form.soloAsignados };
+        if (!MODO_NUBE) {
+          cambios.email = form.email;
+          // En edición, dejar la contraseña vacía conserva la actual.
+          if (form.password !== "") cambios.password = form.password;
+        }
         const guardado = actualizarUsuario(form.id, cambios);
-        avisarUsuarios(`Cambios de “${guardado.nombre}” guardados.`);
+        if (MODO_NUBE && form.password !== "") {
+          await restablecerClave(form.id, form.password);
+          registrarHistorial({ accion: "editar", objeto: "usuarios", objetoId: form.id, detalle: `${guardado.nombre}: contraseña restablecida` });
+        }
+        avisarUsuarios(MODO_NUBE && form.password !== ""
+          ? `Cambios de “${guardado.nombre}” guardados. Su nueva contraseña es temporal: deberá cambiarla al entrar.`
+          : `Cambios de “${guardado.nombre}” guardados.`);
+      } else if (MODO_NUBE) {
+        const nombreRolNuevo = nombreRol(form.rol);
+        const res = await crearUsuarioNube({
+          nombre: form.nombre, email: form.email, rol: form.rol, contratos: form.contratos,
+          soloAsignados: form.soloAsignados, password: form.password,
+        });
+        await recargarNube();
+        registrarHistorial({ accion: "crear", objeto: "usuarios", objetoId: res.id, detalle: `${form.nombre.trim()} (${form.email.trim().toLowerCase()}) — ${nombreRolNuevo}` });
+        avisarUsuarios(res.password
+          ? `Usuario “${form.nombre.trim()}” creado. Contraseña temporal: ${res.password} (cópiala ahora: no se vuelve a mostrar). Deberá cambiarla al entrar.`
+          : `Usuario “${form.nombre.trim()}” creado. Ya puede entrar con su correo y la contraseña indicada; deberá cambiarla al entrar.`);
       } else {
         const creado = crearUsuario(form);
         avisarUsuarios(`Usuario “${creado.nombre}” creado. Ya puede iniciar sesión con su correo y la contraseña indicada.`);
@@ -146,17 +169,21 @@ export default function UsuariosPermisos({ onCambio }) {
               </label>
               <label className="campo-grupo">
                 <span className="campo">Correo *</span>
-                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required />
+                <input type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} required disabled={MODO_NUBE && Boolean(form.id)} />
               </label>
               <label className="campo-grupo">
-                <span className="campo">{form.id ? "Contraseña demo (opcional)" : "Contraseña demo *"}</span>
+                <span className="campo">
+                  {MODO_NUBE
+                    ? (form.id ? "Nueva contraseña temporal (opcional)" : "Contraseña temporal (opcional: si la dejas vacía se genera una)")
+                    : (form.id ? "Contraseña demo (opcional)" : "Contraseña demo *")}
+                </span>
                 <input
                   type="password"
                   autoComplete="new-password"
                   value={form.password}
                   onChange={(e) => setForm({ ...form, password: e.target.value })}
                   placeholder={form.id ? "Dejar vacía para no cambiarla" : ""}
-                  required={!form.id}
+                  required={!form.id && !MODO_NUBE}
                 />
               </label>
               <label className="campo-grupo">
