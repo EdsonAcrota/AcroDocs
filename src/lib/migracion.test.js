@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import {
   migrarV6aV7, USUARIOS_DEMO, aplicarPerfeccionamientoBases, actualizarPerfeccionamientoItems,
-  aplicarPrimerPeriodoManual,
+  aplicarPrimerPeriodoManual, renombrarNotaEventuales,
 } from "./migracion.js";
 import { catalogoSemilla } from "./catalogo.js";
 import { MATRIZ_INICIAL, ROLES } from "./permisos.js";
@@ -244,6 +244,21 @@ describe("perfeccionamiento según bases integradas", () => {
     expect(aplicarPrimerPeriodoManual(catalogo)).toBe(true);
     expect(mensuales.map((s) => s.soloPrimerPeriodo)).toEqual([true, true, true, true]);
     expect(aplicarPrimerPeriodoManual(catalogo)).toBe(false);
+  });
+
+  it("la nota antigua de los hitos eventuales pasa al vocabulario nuevo en el catálogo y en los contratos, una sola vez", () => {
+    const vieja = "Trámite eventual agregado al expediente. No se crea automáticamente.";
+    const nueva = "Hito eventual agregado al expediente. No se crea automáticamente.";
+    const catalogo = catalogoSemilla();
+    catalogo.eventuales.obra[0].nota = vieja;
+    catalogo.eventuales.obra[1].nota = "Una nota que escribió el usuario";
+    const data = { catalogo, items: [{ id: "a", nota: vieja }, { id: "b", nota: "Otra" }] };
+
+    expect(renombrarNotaEventuales(data)).toBe(true);
+    expect(catalogo.eventuales.obra[0].nota).toBe(nueva);
+    expect(catalogo.eventuales.obra[1].nota).toBe("Una nota que escribió el usuario");
+    expect(data.items.map((i) => i.nota)).toEqual([nueva, "Otra"]);
+    expect(renombrarNotaEventuales(data)).toBe(false);
   });
 
   it("actualiza el hito existente sin tocar archivos ni estado", () => {

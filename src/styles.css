@@ -600,6 +600,11 @@ input[readonly] { background: var(--sheet-2); color: var(--muted); }
   .plazo-item { break-inside: avoid; }
   input, select, textarea { border: 0 !important; background: transparent !important; box-shadow: none !important; padding: 0 !important; font-size: 11px !important; appearance: none; }
   .ruta-meta input, .ruta-meta select { display: inline-block; width: auto !important; }
+  /* Lo que solo sirve en pantalla (filtros, botones de agregar, subir/bajar y Abrir) no se imprime. */
+  .barra-filtros, .checklist-toolbar, .orden-hito, .tarea-lado .btn, .etapa-flecha { display: none !important; }
+  /* Una etapa larga puede partirse entre páginas; cada hito no. */
+  .etapa-expediente { break-inside: auto; }
+  .tarea-fila, .seccion-cab { break-inside: avoid; }
 }
 
 /* ---------- Tablas que pasan a tarjetas ---------- */
@@ -706,7 +711,10 @@ input[readonly] { background: var(--sheet-2); color: var(--muted); }
   }
   .modal-cuerpo, .modal-tarea-cuerpo { flex: 1; min-height: 0; overflow-y: auto; max-height: none; }
   .modal-cab, .modal-pie { flex: none; }
-  .modal-pie { padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  /* Los botones del pie van de a dos para que no ocupen un cuarto de la pantalla. */
+  .modal-pie { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; padding-bottom: calc(12px + env(safe-area-inset-bottom)); }
+  .modal-pie .pie-espacio { display: none; }
+  .modal-pie .btn { width: 100%; padding-left: 8px; padding-right: 8px; white-space: normal; text-align: center; }
 }
 @media (max-width: 640px) {
   .integrantes-cab { display: none; }

@@ -169,6 +169,25 @@ export const aplicarPerfeccionamientoBases = (catalogo) => {
   return cambio;
 };
 
+// La nota por defecto de los hitos eventuales decía "Trámite eventual"; "trámite" ya es
+// otra cosa en la app. Se cambia solo si sigue siendo el texto original, tanto en el
+// catálogo como en los hitos ya creados en los contratos.
+const NOTA_EVENTUAL_ANTERIOR = "Trámite eventual agregado al expediente. No se crea automáticamente.";
+const NOTA_EVENTUAL = "Hito eventual agregado al expediente. No se crea automáticamente.";
+
+export const renombrarNotaEventuales = (data) => {
+  let cambio = false;
+  const cambiar = (objeto) => {
+    if (objeto?.nota === NOTA_EVENTUAL_ANTERIOR) {
+      objeto.nota = NOTA_EVENTUAL;
+      cambio = true;
+    }
+  };
+  for (const ambito of AMBITOS) (data?.catalogo?.eventuales?.[ambito] || []).forEach(cambiar);
+  (data?.items || []).forEach(cambiar);
+  return cambio;
+};
+
 // Las valorizaciones y los informes mensuales se agregan de a uno, conforme avanza la
 // obra o la consultoría (ver PERIODOS_A_MANO). Un catálogo guardado antes de ese cambio
 // los generaba todos de golpe al crear el contrato: se marca para que genere solo el

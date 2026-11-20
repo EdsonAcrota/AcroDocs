@@ -31,7 +31,7 @@ import { hoy, sumarDias, sumarHabiles, diasEntre, FERIADOS_2026 } from "./fechas
 import { tienePermiso, veContrato, PERMISOS, ROLES } from "./permisos.js";
 import {
   migrarV6aV7, fundirCatalogo, fusionarNovedadesCatalogo, aplicarPerfeccionamientoBases,
-  aplicarPrimerPeriodoManual,
+  aplicarPrimerPeriodoManual, renombrarNotaEventuales,
   actualizarPerfeccionamientoItems, copiarUsuariosDemo, copiarMatrizInicial, empresaVacia,
 } from "./migracion.js";
 
@@ -203,6 +203,7 @@ const read = () => {
         if (aplicarPerfeccionamientoBases(data.catalogo)) guardar = true;
         if (aplicarPrimerPeriodoManual(data.catalogo)) guardar = true;
         if (actualizarPerfeccionamientoItems(data)) guardar = true;
+        if (renombrarNotaEventuales(data)) guardar = true;
         if (guardar) {
           try { localStorage.setItem(KEY, JSON.stringify(data)); } catch { /* ignore */ }
         }
