@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Política de privacidad · AcroDocs</title>
+  <style>
+    :root { color-scheme: light dark; }
+    body { margin: 0; font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; background: #fbf6ec; color: #2b2a26; }
+    main { max-width: 42rem; margin: 0 auto; padding: 2rem 1rem 3rem; }
+    h1 { font-size: 1.6rem; margin: 0 0 .25rem; }
+    h2 { font-size: 1.1rem; margin: 2rem 0 .4rem; }
+    p, li { margin: .4rem 0; }
+    ul { padding-left: 1.2rem; }
+    .fecha { color: #6b675c; font-size: .9rem; }
+    a { color: #1d5fa8; }
+    @media (prefers-color-scheme: dark) {
+      body { background: #1d1c19; color: #ece8dc; }
+      .fecha { color: #a8a496; }
+      a { color: #8dbcf0; }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>Política de privacidad de AcroDocs</h1>
+    <p class="fecha">Última actualización: 20 de noviembre de 2026</p>
+
+    <p>AcroDocs es una aplicación web de uso interno de una empresa contratista para llevar el control documentario de sus contratos de obra y consultoría: expedientes, hitos, plazos, trámites ante la supervisión y la entidad, y los documentos y fotos que los respaldan. No está abierta al público: solo entran las personas a las que el administrador de la empresa les creó un usuario.</p>
+
+    <h2>Qué información guarda</h2>
+    <ul>
+      <li><strong>De los usuarios:</strong> nombre, correo, rol y los contratos que tienen asignados.</li>
+      <li><strong>Del trabajo:</strong> datos de los contratos, hitos, movimientos, trámites e historial de cambios.</li>
+      <li><strong>Archivos adjuntos:</strong> los documentos y fotos que los usuarios suben a un hito o trámite.</li>
+    </ul>
+
+    <h2>Uso de Google Drive</h2>
+    <p>Los archivos adjuntos se guardan en la cuenta de Google Drive del administrador de la empresa, dentro de la carpeta <em>AcroDocs</em>. Para eso, el administrador autoriza a AcroDocs una sola vez con el permiso <code>drive.file</code>, que permite ver y administrar <strong>únicamente los archivos y carpetas que AcroDocs mismo crea</strong>. AcroDocs no puede leer ni modificar ningún otro archivo del Drive, ni correos, contactos o calendario.</p>
+    <p>Los demás usuarios de AcroDocs no necesitan una cuenta de Google ni dan acceso a su propio Drive. Cada vez que alguien sube o descarga un archivo, el servidor comprueba que tenga el permiso correspondiente y que pueda ver el contrato al que pertenece.</p>
+    <p>El uso que AcroDocs hace de la información recibida de las API de Google cumple la <a href="https://developers.google.com/terms/api-services-user-data-policy">Política de datos de usuario de los servicios de API de Google</a>, incluidos los requisitos de uso limitado.</p>
+
+    <h2>Para qué se usa y con quién se comparte</h2>
+    <p>La información se usa solo para operar el control documentario de la empresa: mostrarla a los usuarios autorizados, guardarla y calcular plazos y alertas. No se vende, no se usa para publicidad y no se comparte con terceros, salvo los proveedores técnicos que la alojan: Supabase (base de datos y acceso de usuarios), Vercel (servidor de la aplicación) y Google Drive (archivos adjuntos).</p>
+
+    <h2>Seguridad</h2>
+    <p>El ingreso es con correo y contraseña. Los permisos por rol y por contrato los hace cumplir la base de datos, y las conexiones van cifradas. Las claves de acceso a Google y a la base de datos viven solo en el servidor, nunca en el navegador.</p>
+
+    <h2>Conservación y eliminación</h2>
+    <p>Los datos se conservan mientras el contrato siga en el sistema. Al eliminar un documento, el archivo pasa a la papelera de Drive, donde se puede recuperar durante 30 días. El administrador puede quitar en cualquier momento el acceso de AcroDocs desde <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>. Quien quiera que se corrijan o eliminen sus datos puede pedirlo al administrador de la empresa que le dio su usuario.</p>
+
+    <h2>Cambios</h2>
+    <p>Si esta política cambia, se actualizará en esta misma página y se modificará la fecha de arriba.</p>
+  </main>
+</body>
+</html>

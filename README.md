@@ -240,6 +240,7 @@ En modo nube, los documentos y las fotos de hitos, trámites y línea de tiempo 
    - Nombre de la app `AcroDocs`; correo de asistencia y de contacto: el tuyo.
    - Público: **Externo**.
    - **Acceso a los datos → Agregar o quitar permisos** → marca `…/auth/drive.file` («Ver, editar, crear y borrar solo los archivos de Google Drive que utilizas con esta app») → Guardar.
+   - **Información de la marca:** para poder publicar, Google exige nombre, correo de asistencia, correo de contacto, **página principal** y **política de privacidad**. Usa `https://acrodocs.vercel.app` y `https://acrodocs.vercel.app/privacidad.html` (la página está en `public/privacidad.html`; debe estar desplegada en producción) y agrega `acrodocs.vercel.app` en **Dominios autorizados**. Guarda.
    - **Público → Publicar la aplicación** → deja el estado en **En producción**. **Es obligatorio:** en modo «Prueba» el token caduca a los 7 días y los archivos dejarían de subirse. `drive.file` no es un permiso sensible, así que no pide revisión de Google.
 4. **Clientes → Crear cliente** → tipo **Aplicación de escritorio** → nombre `AcroDocs servidor`. Deja abierta la ventana con el **ID de cliente** y el **secreto** (no los pegues en ningún chat).
 5. En una terminal, dentro de esta carpeta:
