@@ -2,7 +2,7 @@ import React, { useMemo, useState } from "react";
 import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
   getTramite, updateTramite, deleteTramite, listItems, updateItem, addItem, removeItem,
-  agregarDocumento, reemplazarDocumento, eliminarDocumento, puede,
+  agregarDocumento, agregarVersionDocumento, siguienteVersion, eliminarDocumento, puede,
   addTareaEventual, listarEventuales, listarHitosOpcionales, addHitoOpcional,
   agregarPeriodo, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
   actualizarCatalogoPorClave, agregarCatalogoHito, moverItem, hoyISO,
@@ -20,6 +20,7 @@ import {
 import HistorialLista from "../components/HistorialLista.jsx";
 import EjecutorForm from "../components/EjecutorForm.jsx";
 import LineaTiempo from "../components/LineaTiempo.jsx";
+import Plegable from "../components/Plegable.jsx";
 import SubirArchivo, { TomarFoto } from "../components/SubirArchivo.jsx";
 
 const ROTULO_TIPO_CATALOGO = { hito: "hito de catálogo", recurrente: "hito recurrente", eventual: "hito eventual", opcional: "hito opcional" };
@@ -51,6 +52,14 @@ const fechaHora = (iso) => {
   const d = new Date(iso);
   if (Number.isNaN(d.getTime())) return "—";
   return d.toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" });
+};
+
+// "Carta.pdf" -> "Carta (v2).pdf": cada versión nueva es un archivo aparte y su nombre las distingue.
+const nombreConVersion = (nombre, numero) => {
+  const punto = nombre.lastIndexOf(".");
+  const base = punto > 0 ? nombre.slice(0, punto) : nombre;
+  const extension = punto > 0 ? nombre.slice(punto) : "";
+  return `${base} (v${numero})${extension}`;
 };
 
 // Nombre con el que se descarga una versión anterior: el del documento más
@@ -182,6 +191,12 @@ export default function TramiteDetalle() {
   const procedimientosDelHito = useMemo(
     () => (tarea ? procedimientos.filter((p) => p.hitoId === tarea.id) : []),
     [procedimientos, tarea]
+  );
+
+  // Archivos que no corresponden a ningún requisito de la lista.
+  const otrosDocumentos = useMemo(
+    () => (tarea ? (tarea.documentos || []).filter((d) => !(tarea.docsRequeridos || []).includes(d.tipoDoc)) : []),
+    [tarea]
   );
 
   const resumen = useMemo(() => {
@@ -767,8 +782,8 @@ export default function TramiteDetalle() {
     }
   };
 
-  // Sube el archivo nuevo y lo registra como versión vigente del documento; el
-  // anterior queda en `versiones` y se puede descargar.
+  // Sube el archivo nuevo y lo agrega como un archivo adicional del mismo documento ("versión N"):
+  // el anterior no se reemplaza ni se oculta, sigue en la lista.
   const subirNuevaVersion = async (event, doc) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -785,10 +800,10 @@ export default function TramiteDetalle() {
         tareaId: tarea.id,
         permiso: "reemplazar",
         tipoDoc: doc.tipoDoc || "Otros",
-        nombre: nombrePorEtiqueta(doc.tipoDoc || "Documento", file.name),
+        nombre: nombreConVersion(nombrePorEtiqueta(doc.tipoDoc || "Documento", file.name), siguienteVersion(tarea.documentos, doc)),
       });
       try {
-        reemplazarDocumento(tarea.id, doc.id, meta);
+        agregarVersionDocumento(tarea.id, doc.id, meta);
       } catch (error) {
         await eliminarArchivo(meta.archivoId).catch(() => {});
         throw error;
@@ -893,23 +908,33 @@ export default function TramiteDetalle() {
   // Fila de un archivo con sus acciones y, si tiene, la lista de versiones anteriores.
   const renderArchivo = (doc, conTipo) => {
     const versiones = doc.versiones || [];
+    // Las versiones nuevas son archivos aparte ("versión N"); el primero de una serie se rotula "versión 1".
+    const etiquetaVersion = doc.version
+      ? `versión ${doc.version}`
+      : versiones.length
+        ? `versión ${versiones.length + 1}`
+        : (tarea?.documentos || []).some((d) => d.versionDe === doc.id) ? "versión 1" : "";
     return (
       <React.Fragment key={doc.id}>
         <div className="archivo-fila">
           <div className="doc-ico">{iconoArchivo(doc.mime, doc.nombre)}</div>
           <div className="archivo-datos">
-            <strong>{doc.nombre}</strong>
-            <span>{conTipo ? `${doc.tipoDoc} · ` : ""}{formatearTamano(doc.tamano)} · {fecha(doc.fecha)}{versiones.length ? ` · versión ${versiones.length + 1}` : ""}</span>
+            <strong title={doc.nombre}>{doc.nombre}</strong>
+            <span>{conTipo ? `${doc.tipoDoc} · ` : ""}{formatearTamano(doc.tamano)} · {fecha(doc.fecha)}{etiquetaVersion ? ` · ${etiquetaVersion}` : ""}</span>
           </div>
-          {permiso.descargar && <button type="button" className="btn mini" onClick={() => descargar(doc)}>Descargar</button>}
-          {permiso.reemplazar && (
-            <label className={`btn mini subir-archivo ${subiendo ? "deshabilitado" : ""}`} title="Sube una nueva versión; la anterior se conserva">
-              {subiendo === `v:${doc.id}` ? "Subiendo…" : "Nueva versión"}
-              <input type="file" hidden disabled={Boolean(subiendo)} onChange={(e) => subirNuevaVersion(e, doc)} />
-            </label>
-          )}
-          {permiso.borrar_doc && (
-            <button type="button" className="btn-icono peligro" title="Eliminar archivo" onClick={() => borrarArchivo(doc)}>×</button>
+          {(permiso.descargar || permiso.reemplazar || permiso.borrar_doc) && (
+            <div className="archivo-acciones">
+              {permiso.descargar && <button type="button" className="btn mini" onClick={() => descargar(doc)}>Descargar</button>}
+              {permiso.reemplazar && (
+                <label className={`btn mini subir-archivo ${subiendo ? "deshabilitado" : ""}`} title="Sube una nueva versión como archivo adicional; el anterior se queda en la lista">
+                  {subiendo === `v:${doc.id}` ? "Subiendo…" : "Nueva versión"}
+                  <input type="file" hidden disabled={Boolean(subiendo)} onChange={(e) => subirNuevaVersion(e, doc)} />
+                </label>
+              )}
+              {permiso.borrar_doc && (
+                <button type="button" className="btn-icono peligro" title="Eliminar archivo" onClick={() => borrarArchivo(doc)}>×</button>
+              )}
+            </div>
           )}
         </div>
         {versiones.length > 0 && (
@@ -1350,50 +1375,94 @@ export default function TramiteDetalle() {
               )}
               {errorArchivo && <div className="alerta">{errorArchivo}</div>}
 
-              <div className={`plazo-caja ${estadoVencimiento(tarea)}`}>
-                <div>
-                  <b>Fecha límite</b>
-                  <strong>{fecha(tarea.fecha_limite)}</strong>
-                  <span>{textoVencimiento(tarea)}</span>
+              <React.Fragment key={tarea.id}>
+              <Plegable
+                titulo="Estado y responsable"
+                resumen={`${tarea.estado || "Pendiente"}${tarea.responsable ? ` · ${tarea.responsable}` : ""}`}
+                abierto
+                recordar="hito-estado"
+              >
+                <div className="grid-form">
+                  {tarea.pasos?.length ? (
+                    <div className="campo-grupo">
+                      <span className="campo">Estado del hito</span>
+                      <div className="chips">
+                        <span className="badge azul">{tarea.estado}</span>
+                        {permiso.estado && (tarea.estado === "No aplica"
+                          ? <button type="button" className="btn mini" onClick={() => cambiarItem({ estado: "Pendiente" })}>Reabrir</button>
+                          : <button type="button" className="btn mini" onClick={() => cambiarItem({ estado: "No aplica" })}>Marcar como No aplica</button>)}
+                      </div>
+                      <span className="ref">Lo determinan los pasos del trámite.</span>
+                    </div>
+                  ) : (
+                    <label className="campo-grupo">
+                      <span className="campo">Estado del hito</span>
+                      <select disabled={!permiso.estado} value={tarea.estado || "Pendiente"} onChange={(e) => cambiarItem({ estado: e.target.value })}>
+                        {ESTADOS.map((e) => <option key={e}>{e}</option>)}
+                      </select>
+                    </label>
+                  )}
+                  <label className="campo-grupo">
+                    <span className="campo">Responsable</span>
+                    <input disabled={!permiso.estado} value={tarea.responsable || ""} onChange={(e) => cambiarItem({ responsable: e.target.value })} placeholder="Área o persona responsable" />
+                  </label>
+                  <label className="campo-grupo">
+                    <span className="campo">Fecha de presentación</span>
+                    <input disabled={!permiso.estado} type="date" value={tarea.fecha || ""} onChange={(e) => cambiarItem({ fecha: e.target.value })} />
+                  </label>
+                  <label className="campo-grupo">
+                    <span className="campo">Fecha límite</span>
+                    <input disabled={!permiso.plazos || Boolean(tarea.pasos?.length)} type="date" value={tarea.fecha_limite || ""} onChange={(e) => cambiarItem({ fecha_limite: e.target.value })} />
+                  </label>
+                  <label className="campo-grupo ancho-completo">
+                    <span className="campo">Observación / sustento</span>
+                    <textarea disabled={!permiso.estado} rows="2" value={tarea.observacion || ""} onChange={(e) => cambiarItem({ observacion: e.target.value })} placeholder="Anotaciones, número de expediente, cargo de recepción…" />
+                  </label>
                 </div>
-                <div>
-                  <b>Plazo legal</b>
-                  <strong>
-                    {tarea.plazoDias
-                      ? `${tarea.plazoDias} días ${tarea.plazoHabiles ? "hábiles" : "calendario"}`
-                      : tarea.recurrente
-                        ? tarea.frecuencia === "anual"
-                          ? `${tarea.diaLimite} días antes del vencimiento`
-                          : `Día ${tarea.diaLimite} de cada mes`
-                        : "Sin plazo automático"}
-                  </strong>
-                  <span>{tarea.norma || "Configurable"}</span>
+              </Plegable>
+
+              <Plegable titulo="Norma y plazos" resumen={textoVencimiento(tarea)} recordar="hito-norma">
+                <div className={`plazo-caja ${estadoVencimiento(tarea)}`}>
+                  <div>
+                    <b>Fecha límite</b>
+                    <strong>{fecha(tarea.fecha_limite)}</strong>
+                    <span>{textoVencimiento(tarea)}</span>
+                  </div>
+                  <div>
+                    <b>Plazo legal</b>
+                    <strong>
+                      {tarea.plazoDias
+                        ? `${tarea.plazoDias} días ${tarea.plazoHabiles ? "hábiles" : "calendario"}`
+                        : tarea.recurrente
+                          ? tarea.frecuencia === "anual"
+                            ? `${tarea.diaLimite} días antes del vencimiento`
+                            : `Día ${tarea.diaLimite} de cada mes`
+                          : "Sin plazo automático"}
+                    </strong>
+                    <span>{tarea.norma || "Configurable"}</span>
+                  </div>
+                  <div>
+                    <b>Se da por cumplido con</b>
+                    <strong>{tarea.docCumplimiento || "Marcado manual"}</strong>
+                    <span>{tarea.docsRequeridos?.length || 0} documento(s) en la plantilla</span>
+                  </div>
                 </div>
-                <div>
-                  <b>Documentos</b>
-                  <strong>{(tarea.documentos || []).length} cargados</strong>
-                  <span>{faltantes(tarea).length} requisito(s) pendiente(s)</span>
-                </div>
-              </div>
+              </Plegable>
 
               <LineaTiempo item={tarea} permiso={permiso} onCambio={recargar} />
 
-              <div className="catalogo-hito">
-                <div className="catalogo-hito-cab">
-                  <div>
-                    <h4>Trámites vinculados a este hito</h4>
-                    <span className="ref">Movimientos del flujo completo hasta el documento objetivo.</span>
+              <Plegable
+                titulo="Trámites vinculados"
+                resumen={procedimientosDelHito.length ? `${procedimientosDelHito.length} trámite(s)` : "Ninguno"}
+                abierto={procedimientosDelHito.length > 0}
+                recordar="hito-tramites"
+              >
+                <p className="plegable-sub">Movimientos del flujo completo hasta el documento objetivo.</p>
+                {permiso.agregar && (
+                  <div className="chips" style={{ marginBottom: 10 }}>
+                    <button type="button" className="btn mini" onClick={() => abrirNuevoProcedimiento(tarea.id)}>+ Iniciar trámite</button>
                   </div>
-                  {permiso.agregar && (
-                    <button
-                      type="button"
-                      className="btn mini"
-                      onClick={() => abrirNuevoProcedimiento(tarea.id)}
-                    >
-                      + Iniciar trámite
-                    </button>
-                  )}
-                </div>
+                )}
                 {procedimientosDelHito.length === 0 ? (
                   <div className="catalogo-hito-datos">Este hito todavía no tiene trámites. Un trámite es el procedimiento del contratista para lograr su documento objetivo.</div>
                 ) : (
@@ -1405,92 +1474,15 @@ export default function TramiteDetalle() {
                     ))}
                   </div>
                 )}
-              </div>
+              </Plegable>
 
-              <div className="catalogo-hito">
-                <div className="catalogo-hito-cab">
-                  <div>
-                    <h4>Catálogo de este hito</h4>
-                    <span className="ref">
-                      {estadoCatalogo
-                        ? `Está en el catálogo (${ROTULO_TIPO_CATALOGO[estadoCatalogo.tipo] || estadoCatalogo.tipo}) · clave ${estadoCatalogo.clave}`
-                        : "Aún no está en el catálogo"}
-                    </span>
-                  </div>
-                  {permiso.catalogo && (
-                    <div className="chips">
-                      {estadoCatalogo ? (
-                        <>
-                          <button type="button" className="btn mini primario" disabled={estadoCatalogo.campos.length === 0} onClick={actualizarCatalogoConEsteHito}>
-                            Actualizar catálogo con este hito
-                          </button>
-                          {estadoCatalogo.tipo === "hito" && (
-                            <button type="button" className="btn mini" onClick={abrirEditarCatalogo}>Editar catálogo</button>
-                          )}
-                        </>
-                      ) : (
-                        <button type="button" className="btn mini" onClick={abrirEditarCatalogo}>Convertir en catálogo</button>
-                      )}
-                    </div>
-                  )}
-                </div>
-                <div className="catalogo-hito-datos">
-                  {estadoCatalogo && (estadoCatalogo.campos.length === 0
-                    ? <span>El catálogo ya tiene este mismo detalle.</span>
-                    : <span className="texto-ambar">El catálogo difiere en: {describirCamposCatalogo(estadoCatalogo.campos)}.</span>)}
-                  <span>{tarea.docsRequeridos?.length || 0} documento(s) en la plantilla</span>
-                  <span>Cumplimiento: {tarea.docCumplimiento || "Manual"}</span>
-                  <span>{tarea.plazoDias ? `${tarea.plazoDias} días ${tarea.plazoHabiles ? "hábiles" : "calendario"}` : "Sin plazo automático"}</span>
-                  <span>Los cambios aquí afectan a contratos nuevos.</span>
-                </div>
-              </div>
-
-              <div className="grid-form">
-                {tarea.pasos?.length ? (
-                  <div className="campo-grupo">
-                    <span className="campo">Estado del hito</span>
-                    <div className="chips">
-                      <span className="badge azul">{tarea.estado}</span>
-                      {permiso.estado && (tarea.estado === "No aplica"
-                        ? <button type="button" className="btn mini" onClick={() => cambiarItem({ estado: "Pendiente" })}>Reabrir</button>
-                        : <button type="button" className="btn mini" onClick={() => cambiarItem({ estado: "No aplica" })}>Marcar como No aplica</button>)}
-                    </div>
-                    <span className="ref">Lo determinan los pasos del trámite.</span>
-                  </div>
-                ) : (
-                  <label className="campo-grupo">
-                    <span className="campo">Estado del hito</span>
-                    <select disabled={!permiso.estado} value={tarea.estado || "Pendiente"} onChange={(e) => cambiarItem({ estado: e.target.value })}>
-                      {ESTADOS.map((e) => <option key={e}>{e}</option>)}
-                    </select>
-                  </label>
-                )}
-                <label className="campo-grupo">
-                  <span className="campo">Responsable</span>
-                  <input disabled={!permiso.estado} value={tarea.responsable || ""} onChange={(e) => cambiarItem({ responsable: e.target.value })} placeholder="Área o persona responsable" />
-                </label>
-                <label className="campo-grupo">
-                  <span className="campo">Fecha de presentación</span>
-                  <input disabled={!permiso.estado} type="date" value={tarea.fecha || ""} onChange={(e) => cambiarItem({ fecha: e.target.value })} />
-                </label>
-                <label className="campo-grupo">
-                  <span className="campo">Fecha límite</span>
-                  <input disabled={!permiso.plazos || Boolean(tarea.pasos?.length)} type="date" value={tarea.fecha_limite || ""} onChange={(e) => cambiarItem({ fecha_limite: e.target.value })} />
-                </label>
-                <label className="campo-grupo ancho-completo">
-                  <span className="campo">Observación / sustento</span>
-                  <textarea disabled={!permiso.estado} rows="2" value={tarea.observacion || ""} onChange={(e) => cambiarItem({ observacion: e.target.value })} placeholder="Anotaciones, número de expediente, cargo de recepción…" />
-                </label>
-              </div>
-
-              <div className="docs-bloque">
-                <div className="docs-cab">
-                  <div>
-                    <h4>Documentos requeridos</h4>
-                    <span className="ref">Los cambios se guardan también en la plantilla para futuros contratos.</span>
-                  </div>
-                  <span className="badge azul">{(tarea.docsRequeridos || []).length - faltantes(tarea).length}/{(tarea.docsRequeridos || []).length} completos</span>
-                </div>
+              <Plegable
+                titulo="Documentos requeridos"
+                resumen={`${(tarea.docsRequeridos || []).length - faltantes(tarea).length}/${(tarea.docsRequeridos || []).length} completos`}
+                abierto
+                recordar="hito-docs"
+              >
+                <p className="plegable-sub">Los cambios se guardan también en la plantilla para futuros contratos.</p>
 
                 {permiso.catalogo && (
                   <label className="campo-grupo cumplimiento-campo">
@@ -1556,16 +1548,16 @@ export default function TramiteDetalle() {
                     <button type="submit" className="btn mini">Agregar documento</button>
                   </form>
                 )}
-              </div>
+              </Plegable>
 
-              <div className="docs-bloque">
-                <div className="docs-cab">
-                  <div>
-                    <h4>Otros documentos</h4>
-                    <span className="ref">Documentos adicionales que no están en la lista de requisitos.</span>
-                  </div>
-                </div>
-                {(tarea.documentos || []).filter((d) => !(tarea.docsRequeridos || []).includes(d.tipoDoc)).map((doc) => renderArchivo(doc, true))}
+              <Plegable
+                titulo="Otros documentos"
+                resumen={otrosDocumentos.length ? `${otrosDocumentos.length} archivo(s)` : "Ninguno"}
+                abierto={otrosDocumentos.length > 0}
+                recordar="hito-otros"
+              >
+                <p className="plegable-sub">Documentos adicionales que no están en la lista de requisitos.</p>
+                {otrosDocumentos.map((doc) => renderArchivo(doc, true))}
                 {permiso.subir && (
                   <SubirArchivo
                     etiqueta={subiendo === "Otros" ? "Subiendo…" : "+ Subir otro documento"}
@@ -1573,7 +1565,45 @@ export default function TramiteDetalle() {
                     onChange={(e) => subirArchivo(e, "Otros")}
                   />
                 )}
-              </div>
+              </Plegable>
+
+              <Plegable
+                titulo="Catálogo de este hito"
+                resumen={!estadoCatalogo ? "Fuera del catálogo" : estadoCatalogo.campos.length === 0 ? "Al día" : "Difiere del catálogo"}
+                recordar="hito-catalogo"
+              >
+                <p className="plegable-sub">
+                  {estadoCatalogo
+                    ? `Está en el catálogo (${ROTULO_TIPO_CATALOGO[estadoCatalogo.tipo] || estadoCatalogo.tipo}) · clave ${estadoCatalogo.clave}`
+                    : "Aún no está en el catálogo"}
+                </p>
+                <div className="catalogo-hito-datos">
+                  {estadoCatalogo && (estadoCatalogo.campos.length === 0
+                    ? <span>El catálogo ya tiene este mismo detalle.</span>
+                    : <span className="texto-ambar">El catálogo difiere en: {describirCamposCatalogo(estadoCatalogo.campos)}.</span>)}
+                  <span>{tarea.docsRequeridos?.length || 0} documento(s) en la plantilla</span>
+                  <span>Cumplimiento: {tarea.docCumplimiento || "Manual"}</span>
+                  <span>{tarea.plazoDias ? `${tarea.plazoDias} días ${tarea.plazoHabiles ? "hábiles" : "calendario"}` : "Sin plazo automático"}</span>
+                  <span>Los cambios aquí afectan a contratos nuevos.</span>
+                </div>
+                {permiso.catalogo && (
+                  <div className="chips" style={{ margin: "12px 0 4px" }}>
+                    {estadoCatalogo ? (
+                      <>
+                        <button type="button" className="btn mini primario" disabled={estadoCatalogo.campos.length === 0} onClick={actualizarCatalogoConEsteHito}>
+                          Actualizar catálogo con este hito
+                        </button>
+                        {estadoCatalogo.tipo === "hito" && (
+                          <button type="button" className="btn mini" onClick={abrirEditarCatalogo}>Editar catálogo</button>
+                        )}
+                      </>
+                    ) : (
+                      <button type="button" className="btn mini" onClick={abrirEditarCatalogo}>Convertir en catálogo</button>
+                    )}
+                  </div>
+                )}
+              </Plegable>
+              </React.Fragment>
             </div>
 
             <div className="modal-pie">

@@ -44,7 +44,9 @@ Hay nueve roles. La matriz de permisos se edita en **Configuración → Usuarios
 | `legal@acrodocs.local` | `legal123` | Asesor legal |
 | `consulta@acrodocs.local` | `consulta123` | Solo consulta |
 
-Los **asistentes** (técnico y administrativo) pueden subir documentos y registrar movimientos, pero **no pueden borrar** documentos, hitos ni contratos. Para corregir un archivo equivocado se sube una **nueva versión**: la anterior se conserva y se puede descargar.
+Los **asistentes** (técnico y administrativo) pueden subir documentos y registrar movimientos, pero **no pueden borrar** documentos, hitos ni contratos. Para corregir un archivo equivocado se sube una **nueva versión**: se agrega como un archivo adicional del mismo documento («versión 2», «versión 3»…) y el anterior se queda en la lista, sin reemplazarse ni ocultarse.
+
+En el detalle de cada hito, la información está en **cuadros que se contraen y se expanden** (estado y responsable, norma y plazos, seguimiento por pasos, trámites, documentos requeridos, otros documentos y, al final, el catálogo con sus botones de editar y actualizar). El navegador recuerda cómo dejaste cada cuadro. La tarjeta de alertas del Panel también se contrae.
 
 Los permisos son: ver todos los contratos, crear, editar y eliminar contratos, cambiar estado de hitos, agregar hitos y trámites, modificar plazos, eliminar hitos, subir, descargar, reemplazar y eliminar documentos, registrar y corregir movimientos, recibir alertas, editar el catálogo, configurar feriados, gestionar usuarios y descargar respaldos. Los de eliminar aparecen en rojo en la matriz.
 

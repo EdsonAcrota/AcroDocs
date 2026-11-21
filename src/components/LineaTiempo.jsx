@@ -6,6 +6,7 @@ import {
 import { diasEntre } from "../lib/fechas.js";
 import { guardarArchivo, descargarArchivo, eliminarArchivo } from "../lib/archivos.js";
 import { TomarFoto } from "./SubirArchivo.jsx";
+import Plegable from "./Plegable.jsx";
 
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 
@@ -55,16 +56,13 @@ export default function LineaTiempo({ item, permiso, onCambio }) {
   if (!flujo) {
     if (!permiso.estado || !pasosDisponibles(item.id)) return null;
     return (
-      <div className="catalogo-hito">
-        <div className="catalogo-hito-cab">
-          <div>
-            <h4>Seguimiento por pasos</h4>
-            <span className="ref">Este trámite se puede seguir paso a paso: contratista, supervisión y entidad, cada uno con su plazo.</span>
-          </div>
+      <Plegable titulo="Seguimiento por pasos" resumen="No activado" abierto recordar="hito-pasos">
+        <p className="plegable-sub">Este trámite se puede seguir paso a paso: contratista, supervisión y entidad, cada uno con su plazo.</p>
+        <div className="chips" style={{ marginBottom: 8 }}>
           <button type="button" className="btn mini" onClick={() => intentar(() => activarPasos(item.id))}>Activar seguimiento por pasos</button>
         </div>
         {error && <div className="alerta" style={{ marginTop: 8 }}>{error}</div>}
-      </div>
+      </Plegable>
     );
   }
 
@@ -123,23 +121,18 @@ export default function LineaTiempo({ item, permiso, onCambio }) {
 
   const porPaso = (clave) => movimientos.filter((m) => m.pasoClave === clave);
 
+  const resumen = `${flujo.estado === "Completado" ? "Todos los pasos cumplidos" : `A cargo de: ${RESPONSABLE[flujo.aCargo] || "—"}`}${flujo.ciclo > 0 ? ` · Observación ${flujo.ciclo}` : ""}`;
+
   return (
-    <div className="catalogo-hito">
-      <div className="catalogo-hito-cab">
-        <div>
-          <h4>Seguimiento por pasos</h4>
-          <span className="ref">
-            {flujo.estado === "Completado" ? "Todos los pasos cumplidos" : `A cargo de: ${RESPONSABLE[flujo.aCargo] || "—"}`}
-            {flujo.ciclo > 0 ? ` · Observación ${flujo.ciclo}` : ""}
-          </span>
-        </div>
-        <div className="chips">
+    <Plegable titulo="Seguimiento por pasos" resumen={resumen} abierto recordar="hito-pasos">
+      {(puedeRegistrar || (permiso.registrar && flujo.observado && pasoActual)) && (
+        <div className="chips" style={{ marginBottom: 8 }}>
           {puedeRegistrar && <button type="button" className="btn mini primario" onClick={() => abrirFormulario(tiposDelPaso(pasoActual)[0], pasoActual)}>Registrar</button>}
           {permiso.registrar && flujo.observado && pasoActual && (
             <button type="button" className="btn mini primario" onClick={() => abrirFormulario("levantado", pasoActual)}>Levantar observaciones</button>
           )}
         </div>
-      </div>
+      )}
 
       {error && <div className="alerta" style={{ marginTop: 8 }}>{error}</div>}
 
@@ -175,7 +168,7 @@ export default function LineaTiempo({ item, permiso, onCambio }) {
                   {m.asientoCO ? ` · Asiento ${m.asientoCO}` : ""}
                   {m.nota ? ` · ${m.nota}` : ""}
                   {m.archivoId && (
-                    <> · <button type="button" className="btn mini" onClick={() => descargarArchivo(m.archivoId, m.archivoNombre).catch((e) => setError(e.message))}>{m.archivoNombre || "Archivo"}</button></>
+                    <> · <button type="button" className="btn mini btn-archivo" title={m.archivoNombre || "Archivo"} onClick={() => descargarArchivo(m.archivoId, m.archivoNombre).catch((e) => setError(e.message))}><span>{m.archivoNombre || "Archivo"}</span></button></>
                   )}
                   {m.cargoId && <> · cargo registrado</>}
                   {m.anulado && <span style={{ textDecoration: "none", display: "inline-block", marginLeft: 6 }}>(anulado: {m.motivoAnulacion})</span>}
@@ -226,7 +219,7 @@ export default function LineaTiempo({ item, permiso, onCambio }) {
             </label>
             <div className="ancho-completo">
               <TomarFoto onChange={(e) => setArchivo(e.target.files?.[0] || null)} />
-              {archivo && <span className="ref"> Archivo elegido: {archivo.name}</span>}
+              {archivo && <span className="ref nombre-largo"> Archivo elegido: {archivo.name}</span>}
             </div>
           </div>
           <div className="chips">
@@ -235,6 +228,6 @@ export default function LineaTiempo({ item, permiso, onCambio }) {
           </div>
         </form>
       )}
-    </div>
+    </Plegable>
   );
 }

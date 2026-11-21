@@ -867,6 +867,31 @@ describe("versiones de documentos", () => {
     expect(actual.versiones.map((v) => v.archivoId)).toEqual(["arch-1", "arch-2"]);
   });
 
+  it("agregarVersionDocumento agrega el archivo nuevo sin tocar el anterior y numera las versiones", () => {
+    const { item, doc } = conDocumentoCargado("jefe");
+    const antes = JSON.stringify(docsDe(item.id)[0]);
+    const v2 = store.agregarVersionDocumento(item.id, doc.id, meta(2, { nombre: "Contrato (v2).pdf" }));
+    const v3 = store.agregarVersionDocumento(item.id, v2.id, meta(3, { nombre: "Contrato (v3).pdf" }));
+
+    const docs = docsDe(item.id);
+    expect(docs.map((d) => d.archivoId)).toEqual(["arch-1", "arch-2", "arch-3"]);
+    expect(JSON.stringify(docs[0])).toBe(antes); // el primero queda intacto y a la vista
+    expect(docs[1]).toMatchObject({ tipoDoc: "Contrato", versionDe: doc.id, version: 2 });
+    expect(v3).toMatchObject({ versionDe: doc.id, version: 3 }); // desde la v2 sigue la misma serie
+    expect(eliminarArchivo).not.toHaveBeenCalled();
+    expect(store.listarHistorial({ tramiteId: "t-001" })[0].detalle).toContain("nueva versión 3");
+  });
+
+  it("agregarVersionDocumento exige reemplazar y que el documento exista", () => {
+    const { item, doc } = conDocumentoCargado("asis_tec"); // puede subir, pero no reemplazar
+    expect(() => store.agregarVersionDocumento(item.id, doc.id, meta(2))).toThrow(MENSAJE_PERMISO);
+    expect(docsDe(item.id)).toHaveLength(1);
+    store.logout();
+    entrar("jefe");
+    expect(() => store.agregarVersionDocumento(item.id, "no-existe", meta(2))).toThrow("El documento no existe.");
+    expect(() => store.agregarVersionDocumento(item.id, doc.id, { nombre: "x.pdf" })).toThrow("Falta el archivo de la nueva versión.");
+  });
+
   it("asis_tec puede agregarDocumento a un documento ya cargado sin tocar el anterior", () => {
     const { item, doc } = conDocumentoCargado("asis_tec");
     const antes = JSON.stringify(docsDe(item.id)[0]);

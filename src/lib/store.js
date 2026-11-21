@@ -927,8 +927,45 @@ export const agregarDocumento = (itemId, meta = {}) => {
   return doc;
 };
 
-// "Nueva versión": el documento conserva su id y apunta al archivo nuevo; el
-// archivo anterior pasa a `versiones` (sigue en IndexedDB y se puede descargar).
+// "Nueva versión" tal como la usa la interfaz: el archivo nuevo se agrega como un documento más del mismo
+// tipo y el anterior queda intacto y a la vista (no se oculta ni se reemplaza). `versionDe` apunta al
+// primer archivo de la serie y `version` es su número; sigue la numeración de las versiones antiguas.
+// Exige `reemplazar`, igual que antes.
+export const numeroDeVersion = (doc) => doc.version || (doc.versiones || []).length + 1;
+
+// Número de la versión que sigue a `doc` dentro de su serie (la que lo trae como `versionDe` o él mismo).
+export const siguienteVersion = (documentos = [], doc) => {
+  const raiz = doc.versionDe || doc.id;
+  const serie = documentos.filter((d) => d.id === raiz || d.versionDe === raiz);
+  return Math.max(numeroDeVersion(doc), ...serie.map(numeroDeVersion)) + 1;
+};
+
+export const agregarVersionDocumento = (itemId, docId, meta = {}) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === itemId);
+  exigirEn(data, "reemplazar", item?.tramite_id);
+  if (!item) throw new Error("El hito no existe.");
+  const origen = (item.documentos || []).find((d) => d.id === docId);
+  if (!origen) throw new Error("El documento no existe.");
+  if (!meta.archivoId) throw new Error("Falta el archivo de la nueva versión.");
+
+  const version = siguienteVersion(item.documentos, origen);
+  const doc = { ...meta, id: meta.id || uid(), tipoDoc: origen.tipoDoc, versionDe: origen.versionDe || origen.id, version };
+  item.documentos = [...item.documentos, doc];
+  anotarHistorial(data, {
+    accion: "reemplazar",
+    objeto: "documento",
+    objetoId: doc.id,
+    tramiteId: item.tramite_id,
+    detalle: `${item.codigo} — ${origen.tipoDoc || "Documento"}: nueva versión ${version} («${doc.nombre}»); se conserva «${origen.nombre}»`,
+  });
+  write(data);
+  return doc;
+};
+
+// Versión antigua de la interfaz: el documento conserva su id y apunta al archivo nuevo; el archivo
+// anterior pasa a `versiones` (sigue disponible para descargar). Ya no se usa desde la pantalla, pero
+// los documentos guardados así se siguen mostrando.
 export const reemplazarDocumento = (itemId, docId, meta = {}) => {
   const data = read();
   const item = data.items.find((i) => i.id === itemId);

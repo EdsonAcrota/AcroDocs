@@ -4,6 +4,7 @@ import {
   listTramites, listItems, resumenTramite, alertasPanel, hoyISO, puede, nombreEjecutor, getSession,
 } from "../lib/store.js";
 import { diasEntre, saludoPorHora } from "../lib/fechas.js";
+import Plegable, { usePlegado } from "../components/Plegable.jsx";
 
 const fmt = (n) => new Intl.NumberFormat("es-PE", { style: "currency", currency: "PEN", maximumFractionDigits: 0 }).format(n || 0);
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
@@ -37,6 +38,9 @@ export default function Panel() {
     ["contrato", "Contratos por terminar"],
   ];
 
+  // La tarjeta de alertas se contrae y se expande (y recuerda cómo la dejaste).
+  const [alertasAbiertas, alternarAlertas] = usePlegado(true, "panel-alertas");
+
   const recientes = tramites.slice(0, 5);
   const primerNombre = (getSession()?.nombre || "").trim().split(/\s+/)[0];
   const saludo = `${saludoPorHora(new Date().getHours())}${primerNombre ? `, ${primerNombre}` : ""}`;
@@ -64,18 +68,21 @@ export default function Panel() {
       <div className="grid-2">
         {verAlertas && (
         <div className="tarjeta">
-          <div className="tarjeta-cab">
+          <button type="button" className="tarjeta-cab tarjeta-toggle" aria-expanded={alertasAbiertas} onClick={alternarAlertas}>
             <h3>Alertas y vencimientos</h3>
-            {eventuales > 0 && <span className="badge violeta">{eventuales} hito(s) eventual(es)</span>}
-          </div>
-          <div className="cuerpo">
+            <span className="tarjeta-cab-lado">
+              {eventuales > 0 && <span className="badge violeta">{eventuales} hito(s) eventual(es)</span>}
+              <span className={`badge ${alertas.length ? "rojo" : "verde"}`}>{alertas.length === 0 ? "Sin alertas" : `${alertas.length} alerta(s)`}</span>
+            </span>
+            <span className="plegable-flecha" aria-hidden="true" />
+          </button>
+          <div className="cuerpo" hidden={!alertasAbiertas}>
             {alertas.length === 0 && <div className="vacio">No hay plazos próximos ni vencidos.</div>}
             {GRUPOS.map(([grupo, titulo]) => {
               const lista = alertas.filter((a) => a.grupo === grupo);
               if (lista.length === 0) return null;
               return (
-                <div key={grupo}>
-                  <div className="ref" style={{ margin: "10px 0 2px", fontWeight: 600 }}>{titulo} · {lista.length}</div>
+                <Plegable key={grupo} className="plegable-grupo" titulo={`${titulo} · ${lista.length}`} abierto recordar={`panel-alertas-${grupo}`}>
                   {lista.slice(0, 6).map((a, i) => (
                     <div key={i} className={`alerta-item ${a.nivel}`}>
                       <span className="punto" />
@@ -84,7 +91,7 @@ export default function Panel() {
                     </div>
                   ))}
                   {lista.length > 6 && <div className="ref">Hay {lista.length - 6} más en esta categoría.</div>}
-                </div>
+                </Plegable>
               );
             })}
           </div>
