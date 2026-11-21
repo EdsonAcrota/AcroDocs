@@ -20,6 +20,7 @@ import {
 import HistorialLista from "../components/HistorialLista.jsx";
 import EjecutorForm from "../components/EjecutorForm.jsx";
 import LineaTiempo from "../components/LineaTiempo.jsx";
+import { BotonVer } from "../components/VisorArchivo.jsx";
 import Plegable from "../components/Plegable.jsx";
 import SubirArchivo, { TomarFoto } from "../components/SubirArchivo.jsx";
 
@@ -924,6 +925,7 @@ export default function TramiteDetalle() {
           </div>
           {(permiso.descargar || permiso.reemplazar || permiso.borrar_doc) && (
             <div className="archivo-acciones">
+              {permiso.descargar && <BotonVer archivoId={doc.archivoId} nombre={doc.nombre} mime={doc.mime} />}
               {permiso.descargar && <button type="button" className="btn mini" onClick={() => descargar(doc)}>Descargar</button>}
               {permiso.reemplazar && (
                 <label className={`btn mini subir-archivo ${subiendo ? "deshabilitado" : ""}`} title="Sube una nueva versión como archivo adicional; el anterior se queda en la lista">
@@ -949,7 +951,10 @@ export default function TramiteDetalle() {
                   Reemplazada el {fechaHora(v.reemplazadoEl)} por {v.reemplazadoPor || "—"}
                 </div>
                 {permiso.descargar && (
-                  <button type="button" className="btn mini" onClick={() => descargarVersion(doc, v, numero)}>Descargar</button>
+                  <div className="version-acciones">
+                    <BotonVer archivoId={v.archivoId} nombre={nombreDeVersion(doc, v, numero)} mime={v.mime} />
+                    <button type="button" className="btn mini" onClick={() => descargarVersion(doc, v, numero)}>Descargar</button>
+                  </div>
                 )}
               </div>
             ))}
@@ -1786,7 +1791,12 @@ export default function TramiteDetalle() {
                       </span>
                       <span>{m.nota || ""}{m.archivoNombre ? ` · ${m.archivoNombre}` : ""}</span>
                     </div>
-                    {m.archivoId && <button type="button" className="btn mini" onClick={() => descargarArchivo(m.archivoId, m.archivoNombre).catch((e) => setErrorProc(e.message))}>Ver</button>}
+                    {m.archivoId && permiso.descargar && (
+                      <div className="archivo-acciones">
+                        <BotonVer archivoId={m.archivoId} nombre={m.archivoNombre} />
+                        <button type="button" className="btn mini" onClick={() => descargarArchivo(m.archivoId, m.archivoNombre).catch((e) => setErrorProc(e.message))}>Descargar</button>
+                      </div>
+                    )}
                   </div>
                 ))}
                 {permiso.registrar && (

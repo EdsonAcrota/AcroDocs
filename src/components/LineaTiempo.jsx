@@ -7,6 +7,7 @@ import { diasEntre } from "../lib/fechas.js";
 import { guardarArchivo, descargarArchivo, eliminarArchivo } from "../lib/archivos.js";
 import { TomarFoto } from "./SubirArchivo.jsx";
 import Plegable from "./Plegable.jsx";
+import { BotonVer } from "./VisorArchivo.jsx";
 
 const fecha = (f) => (f ? new Date(`${f}T12:00:00`).toLocaleDateString("es-PE", { day: "2-digit", month: "short", year: "numeric" }) : "—");
 
@@ -167,8 +168,9 @@ export default function LineaTiempo({ item, permiso, onCambio }) {
                   {m.numeroDocumento ? ` · Doc. ${m.numeroDocumento}` : ""}
                   {m.asientoCO ? ` · Asiento ${m.asientoCO}` : ""}
                   {m.nota ? ` · ${m.nota}` : ""}
-                  {m.archivoId && (
-                    <> · <button type="button" className="btn mini btn-archivo" title={m.archivoNombre || "Archivo"} onClick={() => descargarArchivo(m.archivoId, m.archivoNombre).catch((e) => setError(e.message))}><span>{m.archivoNombre || "Archivo"}</span></button></>
+                  {m.archivoId && permiso.descargar && (
+                    <> · <BotonVer archivoId={m.archivoId} nombre={m.archivoNombre} />{" "}
+                    <button type="button" className="btn mini btn-archivo" title={`Descargar ${m.archivoNombre || "archivo"}`} onClick={() => descargarArchivo(m.archivoId, m.archivoNombre).catch((e) => setError(e.message))}><span>{m.archivoNombre || "Archivo"}</span></button></>
                   )}
                   {m.cargoId && <> · cargo registrado</>}
                   {m.anulado && <span style={{ textDecoration: "none", display: "inline-block", marginLeft: 6 }}>(anulado: {m.motivoAnulacion})</span>}

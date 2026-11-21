@@ -803,3 +803,49 @@ input[readonly] { background: var(--sheet-2); color: var(--muted); }
   .plegable-cuerpo { padding: 12px 12px 2px; }
   .plegable-resumen { max-width: 46%; }
 }
+
+/* ── Visor de archivos (PDF e imágenes) ── */
+.version-acciones { display: flex; align-items: center; gap: 6px; flex: 0 0 auto; }
+@media (max-width: 700px) {
+  .version-fila { flex-wrap: wrap; row-gap: 6px; }
+  .version-datos { flex: 1 1 0; }
+  .version-acciones { flex: 1 1 100%; padding-left: 47px; }
+  .version-acciones .btn { flex: 1 1 0; }
+}
+.visor-fondo { z-index: 70; padding-top: 24px; padding-bottom: 24px; }
+.modal-visor { width: 1100px; height: calc(100vh - 48px); display: flex; flex-direction: column; }
+.visor-cab { flex: none; gap: 12px; padding: 12px 16px; }
+.visor-cab h3 { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.visor-acciones { display: flex; align-items: center; gap: 10px; flex: none; }
+.visor-barra { flex: none; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; padding: 8px 16px; background: var(--sheet-2); border-bottom: 1px solid var(--line-soft); }
+.visor-grupo { display: flex; align-items: center; gap: 6px; }
+.visor-zoom { min-width: 48px; text-align: center; font-size: 13px; font-variant-numeric: tabular-nums; }
+.visor-pagina { width: 58px; min-height: 34px; padding: 4px 6px; text-align: center; font-size: 14px; -moz-appearance: textfield; appearance: textfield; }
+.visor-pagina::-webkit-outer-spin-button, .visor-pagina::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
+.visor-total { font-size: 13px; color: var(--muted); min-width: 34px; }
+.visor-marco { position: relative; flex: 1; min-height: 0; background: #596068; }
+.visor-lienzo { position: absolute; inset: 0; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y; -webkit-overflow-scrolling: touch; outline: none; }
+.lienzo-contenido { width: max-content; min-width: 100%; box-sizing: border-box; }
+.lienzo-pagina { position: relative; margin: 0 auto; background: #fff; box-shadow: 0 2px 10px rgba(0, 0, 0, .4); overflow: hidden; }
+.lienzo-pagina canvas, .lienzo-pagina img { display: block; width: 100%; height: 100%; }
+.lienzo-error { display: flex; align-items: center; justify-content: center; color: var(--muted); font-size: 13px; }
+.visor-estado { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; padding: 24px; text-align: center; color: var(--ink-2); background: var(--sheet); }
+.visor-estado .alerta { margin: 0; max-width: 520px; }
+.visor-sobre { position: absolute; inset: 0; }
+.visor-alerta { flex: none; margin: 8px 16px 0; }
+.visor-giro { width: 24px; height: 24px; border: 3px solid var(--line); border-top-color: var(--blue); border-radius: 50%; animation: visor-giro .8s linear infinite; }
+@keyframes visor-giro { to { transform: rotate(360deg); } }
+@media (max-width: 699px) {
+  .visor-fondo { padding: 0; }
+  .modal-visor { width: 100%; max-width: 100%; height: 100vh; height: 100dvh; border-radius: 0; }
+  .visor-cab { padding: 10px 12px; }
+  .visor-cab h3 { font-size: 15px; }
+  .visor-barra { padding: 6px 12px; }
+}
+@media (max-width: 480px) {
+  /* En celular la barra cabe en una sola fila: el zoom se hace con los dedos y el botón dice solo «Ajustar». */
+  .visor-ancho, .visor-zoom { display: none; }
+  .visor-barra { gap: 6px; }
+  .visor-barra .btn.mini { padding-left: 11px; padding-right: 11px; min-width: 38px; }
+  .visor-pagina { width: 50px; }
+}

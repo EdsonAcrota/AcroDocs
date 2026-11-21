@@ -108,10 +108,11 @@ export const eliminarArchivo = async (id) => {
 
 // Contenido de un archivo como { blob, nombre }, de IndexedDB o de Drive según el modo.
 // Devuelve null si ya no existe.
-const leerArchivo = async (id) => {
+// `opciones` ({ senal, alProgreso }) solo se usa en modo nube; ver descargarDeDrive.
+const leerArchivo = async (id, opciones) => {
   if (MODO_NUBE) {
     try {
-      return await descargarDeDrive(id);
+      return await descargarDeDrive(id, opciones);
     } catch (error) {
       if (error.estado === 404) return null;
       throw error;
@@ -121,7 +122,7 @@ const leerArchivo = async (id) => {
   return registro?.blob ? { blob: registro.blob, nombre: registro.nombre } : null;
 };
 
-const descargarBlob = (blob, nombre) => {
+export const descargarBlob = (blob, nombre) => {
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
@@ -138,6 +139,13 @@ export const descargarArchivo = async (id, nombreSugerido) => {
   const archivo = await leerArchivo(id);
   if (!archivo) throw new Error(`El archivo ya no está disponible ${DONDE}.`);
   descargarBlob(archivo.blob, nombreSugerido || archivo.nombre || "documento");
+};
+
+// Contenido para el visor: { blob, nombre }. El servidor sigue validando permiso y contrato (modo nube).
+export const obtenerParaVer = async (id, opciones) => {
+  const archivo = await leerArchivo(id, opciones);
+  if (!archivo) throw new Error(`El archivo ya no está disponible ${DONDE}.`);
+  return archivo;
 };
 
 export const descargarTexto = (texto, nombre, tipo = "application/json;charset=utf-8") => {

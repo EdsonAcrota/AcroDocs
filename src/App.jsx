@@ -5,6 +5,8 @@ import { ROLES } from "./lib/permisos.js";
 import { MODO_NUBE } from "./lib/supabase.js";
 import { haySesion, hayPendientes, estadoGuardado, suscribirEstado, reintentarGuardado, alTerminarSesion } from "./lib/nube.js";
 import Icono from "./components/Iconos.jsx";
+import VisorArchivo from "./components/VisorArchivo.jsx";
+import { cerrarVisor } from "./lib/visor.js";
 import Login from "./pages/Login.jsx";
 import CambiarClave from "./pages/CambiarClave.jsx";
 import Panel from "./pages/Panel.jsx";
@@ -37,7 +39,10 @@ export default function App() {
   }, [location.pathname, refrescarSesion]);
 
   useEffect(() => {
-    if (!session) navigate("/", { replace: true });
+    if (!session) {
+      cerrarVisor(); // un archivo abierto no debe reaparecer al volver a entrar
+      navigate("/", { replace: true });
+    }
   }, [session, navigate]);
 
   useEffect(() => {
@@ -194,6 +199,7 @@ export default function App() {
           <Route path="*" element={<Navigate to="/panel" replace />} />
         </Routes>
       </main>
+      <VisorArchivo />
     </div>
   );
 }

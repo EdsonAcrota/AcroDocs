@@ -173,6 +173,7 @@ Los cambios se guardan con un solo botón y se aplican **solo a los contratos nu
 - Feriados configurables para el cálculo de plazos en días hábiles.
 - Descarga de archivos por hito, del expediente completo y de todo en un ZIP; respaldo JSON desde Configuración (solo con permiso).
 - Impresión del expediente desde el navegador.
+- Visor de archivos: el botón **Ver** (junto a «Descargar», con el permiso `descargar`) abre PDF e imágenes dentro de la app, con zoom, «Ajustar al ancho», pellizco y páginas; en celular ocupa toda la pantalla. El PDF se dibuja con pdf.js, que se descarga solo al abrir un PDF, y solo se dibujan las páginas visibles para no agotar la memoria (PDF de hasta 30 MB). Word, Excel y otros formatos no tienen vista previa: se descargan.
 
 ## Reiniciar el demo
 
@@ -279,9 +280,12 @@ src/
   lib/archivos.js            guardar, descargar y eliminar archivos (IndexedDB en local, Drive en la nube)
   lib/drive.js               cliente de /api/archivos: subida directa a Google, plan B por trozos, descarga por trozos
   lib/imagen.js              reduce las fotos del celular (≤ 1600 px, JPEG) antes de subirlas
+  lib/visor.js               qué visor usa cada archivo, tope de píxeles por página y estado del visor abierto
+  lib/lienzo.js              motor del visor: páginas con zoom, pellizco y dibujo perezoso
+  lib/pdfRender.js           pdf.js (import() dinámico); fuentes y .wasm de pdf.js se sirven desde /pdfjs/ (vite.config.js)
   lib/supabase.js            cliente de Supabase y bandera de modo nube
   lib/nube.js                carga, diferencias por id, guardado y alta de usuarios en la nube
-  components/                línea de tiempo, usuarios y permisos, editor de plantilla, historial
+  components/                línea de tiempo, usuarios y permisos, editor de plantilla, historial, visor de archivos
   pages/                     Login, Panel, Tramites, TramiteDetalle, Catalogo, Configuracion
 api/                         health, usuarios y archivos (funciones serverless de Vercel); _drive.js es el cliente de Drive
 scripts/google-token.mjs     obtiene el token de actualización de Google (se usa una sola vez)

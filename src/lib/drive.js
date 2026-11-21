@@ -108,13 +108,16 @@ export const subirADrive = async (archivo, meta = {}) => {
 };
 
 // Baja el archivo completo (trozo a trozo) y lo devuelve como Blob.
-export const descargarDeDrive = async (archivoId) => {
+// opciones (opcionales, para el visor): `senal` (AbortSignal) corta la descarga entre trozos y
+// `alProgreso(recibidos, total)` avisa cuántos bytes van.
+export const descargarDeDrive = async (archivoId, { senal, alProgreso } = {}) => {
   const partes = [];
   let desde = 0;
   let total = Infinity;
   let nombre = "";
   let mime = "";
   while (desde < total) {
+    if (senal?.aborted) throw new ErrorArchivo("Descarga cancelada.");
     const respuesta = await llamar("descargar", { json: { archivoId, desde } });
     if (!respuesta.ok) await leerJson(respuesta);
     total = Number(respuesta.headers.get("X-Total"));
@@ -124,6 +127,7 @@ export const descargarDeDrive = async (archivoId) => {
     if (!parte.byteLength) break;
     partes.push(parte);
     desde += parte.byteLength;
+    if (Number.isFinite(total)) alProgreso?.(desde, total);
   }
   if (Number.isFinite(total) && desde !== total) throw new ErrorArchivo("La descarga quedó incompleta. Inténtalo de nuevo.");
   return { blob: new Blob(partes, { type: mime || "application/octet-stream" }), nombre };
