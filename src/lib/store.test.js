@@ -1856,3 +1856,32 @@ describe("mesa de partes", () => {
     expect(store.listarCargos()).toHaveLength(0);
   });
 });
+
+describe("requisitos que no corresponden", () => {
+  it("«No corresponde» da el requisito por cumplido, no se puede con archivos ni sin permiso, y se puede volver a exigir", () => {
+    entrar("gerente");
+    const item = store.listItems("t-001").find((i) => (i.docsRequeridos || []).length >= 2);
+    const [primero, segundo] = item.docsRequeridos;
+    const pendientes = () => store.resumenTramite("t-001").requisitosPendientes;
+    const antes = pendientes();
+
+    store.marcarRequisitoNoCorresponde(item.id, primero);
+    expect(pendientes()).toBe(antes - 1);
+    expect(store.getItem(item.id).docsNoCorresponde).toEqual([primero]);
+    expect(store.listarHistorial({ tramiteId: "t-001" }).some((h) => h.detalle.includes("No corresponde"))).toBe(true);
+
+    store.agregarDocumento(item.id, { id: "a1", archivoId: "a1", nombre: "x.pdf", tipoDoc: segundo, fecha: "2026-06-01", tamano: 1 });
+    expect(pendientes()).toBe(antes - 2);
+    expect(() => store.marcarRequisitoNoCorresponde(item.id, segundo)).toThrow("ya tiene archivos");
+
+    store.logout();
+    entrar("consulta");
+    expect(() => store.marcarRequisitoNoCorresponde(item.id, primero, false)).toThrow("No tienes permiso");
+
+    store.logout();
+    entrar("gerente");
+    store.marcarRequisitoNoCorresponde(item.id, primero, false);
+    expect(store.getItem(item.id).docsNoCorresponde).toEqual([]);
+    expect(pendientes()).toBe(antes - 1);
+  });
+});

@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from "react";
 import { useParams, Link, useSearchParams, useNavigate } from "react-router-dom";
 import {
-  getTramite, updateTramite, deleteTramite, listItems, updateItem, addItem, removeItem,
+  getTramite, updateTramite, deleteTramite, listItems, updateItem, addItem, removeItem, marcarRequisitoNoCorresponde,
   agregarDocumento, agregarVersionDocumento, siguienteVersion, eliminarDocumento, puede,
   addTareaEventual, listarEventuales, listarHitosOpcionales, addHitoOpcional,
   agregarPeriodo, getConfigFianzas, guardarConfigFianzas, guardarPlantilla,
@@ -13,6 +13,7 @@ import {
   nombreEjecutor, validarEjecutor,
 } from "../lib/store.js";
 import { diasEntre } from "../lib/fechas.js";
+import { avanceRequisitos, estadoRequisito, faltantes } from "../lib/requisitos.js";
 import { TIPOS_FIANZA, PERIODOS_A_MANO, CLASES_HITO, catalogoDe, ordenarGrupos, claseDeHito } from "../lib/catalogo.js";
 import {
   guardarArchivo, descargarArchivo, descargarComoZip, eliminarArchivo, formatearTamano, iconoArchivo,
@@ -96,11 +97,6 @@ const textoVencimiento = (tarea) => {
   if (dias === 0) return "Vence hoy";
   return `Vence en ${dias} día(s)`;
 };
-
-const faltantes = (tarea) =>
-  (tarea.docsRequeridos || []).filter(
-    (req) => !(tarea.documentos || []).some((doc) => doc.tipoDoc === req)
-  );
 
 const silencioProducido = (tarea) =>
   Boolean(tarea.silencioPositivo) &&
@@ -532,6 +528,7 @@ export default function TramiteDetalle() {
   const actualizarDocumentos = (docs, cumplimiento) => {
     if (!tarea) return;
     const cambios = { docsRequeridos: docs };
+    if ((tarea.docsNoCorresponde || []).length) cambios.docsNoCorresponde = tarea.docsNoCorresponde.filter((r) => docs.includes(r));
     if (cumplimiento !== undefined) cambios.docCumplimiento = cumplimiento;
     updateItem(tarea.id, cambios);
     if (tarea.clavePlantilla) {
@@ -542,6 +539,21 @@ export default function TramiteDetalle() {
     }
     recargar();
   };
+
+  const alternarNoCorresponde = (requisito, noCorresponde) => {
+    if (!tarea || !permiso.estado) return;
+    try {
+      marcarRequisitoNoCorresponde(tarea.id, requisito, noCorresponde);
+      setErrorArchivo("");
+    } catch (error) {
+      setErrorArchivo(error?.message || "No se pudo guardar el cambio.");
+    }
+    recargar();
+  };
+
+  const botonNoCorresponde = (requisito) => (
+    <button type="button" className="btn mini btn-no-corresponde" title="Este documento no corresponde a este contrato; se da por cumplido" onClick={() => alternarNoCorresponde(requisito, true)}>No corresponde</button>
+  );
 
   const moverDocumento = (index, direccion) => {
     if (!tarea || !permiso.catalogo) return;
@@ -1095,7 +1107,7 @@ export default function TramiteDetalle() {
                   <div>
                     <div className="codigo">{t.codigo} · {etiquetaClase(t)}</div>
                     <strong>{t.nombre}</strong>
-                    <div className="ref">{(t.documentos || []).length}/{t.docsRequeridos?.length || 0} documentos · {t.estado}</div>
+                    <div className="ref">{avanceRequisitos(t).cumplidos}/{avanceRequisitos(t).total} documentos · {t.estado}</div>
                   </div>
                   <span className={`badge ${claseEstado(t.estado)}`}>{t.estado}</span>
                 </button>
@@ -1112,7 +1124,7 @@ export default function TramiteDetalle() {
                   <div>
                     <div className="codigo">{t.codigo} · {etiquetaClase(t)}</div>
                     <strong>{t.nombre}</strong>
-                    <div className="ref">{(t.documentos || []).length}/{t.docsRequeridos?.length || 0} documentos · {t.estado}</div>
+                    <div className="ref">{avanceRequisitos(t).cumplidos}/{avanceRequisitos(t).total} documentos · {t.estado}</div>
                   </div>
                   <span className={`badge ${claseEstado(t.estado)}`}>{t.estado}</span>
                 </button>
@@ -1299,7 +1311,7 @@ export default function TramiteDetalle() {
                                   <span>No aplica: no requiere documentos</span>
                                 ) : (
                                   <>
-                                    <span>{t.documentos?.length || 0}/{t.docsRequeridos?.length || 0} documentos</span>
+                                    <span>{avanceRequisitos(t).cumplidos}/{avanceRequisitos(t).total} documentos</span>
                                     {faltan.length > 0 && <span className="texto-ambar">{faltan.length} requisito(s) sin archivo</span>}
                                   </>
                                 )}
@@ -1483,7 +1495,7 @@ export default function TramiteDetalle() {
 
               <Plegable
                 titulo="Documentos requeridos"
-                resumen={`${(tarea.docsRequeridos || []).length - faltantes(tarea).length}/${(tarea.docsRequeridos || []).length} completos`}
+                resumen={`${avanceRequisitos(tarea).cumplidos}/${avanceRequisitos(tarea).total} completos`}
                 abierto
                 recordar="hito-docs"
               >
@@ -1505,15 +1517,21 @@ export default function TramiteDetalle() {
 
                 {(tarea.docsRequeridos || []).map((req, idx) => {
                   const docs = (tarea.documentos || []).filter((d) => d.tipoDoc === req);
+                  const estadoReq = estadoRequisito(tarea, req);
+                  const noCorresponde = estadoReq === "no_corresponde";
                   return (
-                    <div className="requisito" key={req}>
+                    <div className={`requisito requisito-${estadoReq.replace("_", "-")}`} key={req}>
                       <div className="requisito-cab">
                         <div>
                           <strong>{req}</strong>
-                          <span className="ref">{docs.length ? `${docs.length} archivo(s)` : "Pendiente de carga"}</span>
+                          <span className="ref">
+                            {noCorresponde ? "No corresponde a este contrato: se da por cumplido" : docs.length ? `${docs.length} archivo(s)` : "Pendiente de carga"}
+                          </span>
                         </div>
                         <div className="requisito-acciones">
-                          <span className={`badge ${docs.length ? "verde" : "ambar"}`}>{docs.length ? "Cargado" : "Pendiente"}</span>
+                          <span className={`badge ${noCorresponde ? "azul" : docs.length ? "verde" : "ambar"}`}>
+                            {noCorresponde ? "No corresponde" : docs.length ? "Cargado" : "Pendiente"}
+                          </span>
                           {permiso.catalogo && (
                             <>
                               <button type="button" className="btn-icono" title="Subir documento en la lista" onClick={() => moverDocumento(idx, -1)}>↑</button>
@@ -1523,13 +1541,27 @@ export default function TramiteDetalle() {
                           )}
                         </div>
                       </div>
-                      {docs.map((doc) => renderArchivo(doc, false))}
-                      {permiso.subir && (
-                        <SubirArchivo
-                          etiqueta={subiendo === req ? "Subiendo…" : docs.length ? "+ Agregar otro archivo" : "Subir archivo"}
-                          ocupado={Boolean(subiendo)}
-                          onChange={(e) => subirArchivo(e, req)}
-                        />
+                      {docs.length > 0 && <div className="requisito-archivos">{docs.map((doc) => renderArchivo(doc, false))}</div>}
+                      {noCorresponde ? (
+                        permiso.estado && (
+                          <div className="subir-fila">
+                            <button type="button" className="btn mini btn-no-corresponde" onClick={() => alternarNoCorresponde(req, false)}>Volver a exigir</button>
+                          </div>
+                        )
+                      ) : (
+                        <>
+                          {permiso.subir ? (
+                            <SubirArchivo
+                              etiqueta={subiendo === req ? "Subiendo…" : docs.length ? "+ Agregar otro archivo" : "Subir archivo"}
+                              ocupado={Boolean(subiendo)}
+                              onChange={(e) => subirArchivo(e, req)}
+                            >
+                              {permiso.estado && docs.length === 0 && botonNoCorresponde(req)}
+                            </SubirArchivo>
+                          ) : (
+                            permiso.estado && docs.length === 0 && <div className="subir-fila">{botonNoCorresponde(req)}</div>
+                          )}
+                        </>
                       )}
                     </div>
                   );

@@ -849,3 +849,18 @@ input[readonly] { background: var(--sheet-2); color: var(--muted); }
   .visor-barra .btn.mini { padding-left: 11px; padding-right: 11px; min-width: 38px; }
   .visor-pagina { width: 50px; }
 }
+
+/* Requisito (lo que se pide) frente al archivo cargado (lo que se subió): el requisito lleva una barra de
+   color según su estado y los archivos van dentro, en cajas más pequeñas y con otro fondo. */
+.requisito { border-left: 5px solid var(--amber-line); }
+.requisito-cargado { border-left-color: var(--green); }
+.requisito-pendiente { border-left-color: var(--amber); }
+.requisito-no-corresponde { border-left-color: var(--blue); background: var(--sheet-2); }
+.requisito-no-corresponde .requisito-cab strong { color: var(--ink-2); }
+.requisito-archivos { margin: 4px 0 8px 6px; }
+.requisito-archivos .archivo-fila { padding: 8px 10px; margin-bottom: 6px; background: var(--sheet-2); border: 1px solid var(--line-soft); border-radius: 12px; }
+.requisito-archivos .archivo-fila:last-of-type { border-bottom: 1px solid var(--line-soft); margin-bottom: 0; }
+.requisito-archivos .versiones-doc { margin: -2px 0 6px 6px; }
+@media (max-width: 700px) {
+  .subir-fila .btn-no-corresponde { flex: 1 1 100%; }
+}

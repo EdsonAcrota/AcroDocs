@@ -173,6 +173,7 @@ Los cambios se guardan con un solo botón y se aplican **solo a los contratos nu
 - Feriados configurables para el cálculo de plazos en días hábiles.
 - Descarga de archivos por hito, del expediente completo y de todo en un ZIP; respaldo JSON desde Configuración (solo con permiso).
 - Impresión del expediente desde el navegador.
+- Documentos requeridos del hito: si uno no corresponde al contrato, **No corresponde** (con el permiso de estado) lo da por cumplido sin archivo y deja de contar como pendiente; **Volver a exigir** lo revierte. Queda en el historial. Cada requisito lleva una barra de color (verde cargado, ámbar pendiente, azul no corresponde) y sus archivos van dentro, en cajas aparte.
 - Visor de archivos: el botón **Ver** (junto a «Descargar», con el permiso `descargar`) abre PDF e imágenes dentro de la app, con zoom, «Ajustar al ancho», pellizco y páginas; en celular ocupa toda la pantalla. El PDF se dibuja con pdf.js, que se descarga solo al abrir un PDF, y solo se dibujan las páginas visibles para no agotar la memoria (PDF de hasta 30 MB). Word, Excel y otros formatos no tienen vista previa: se descargan.
 
 ## Reiniciar el demo
@@ -280,6 +281,7 @@ src/
   lib/archivos.js            guardar, descargar y eliminar archivos (IndexedDB en local, Drive en la nube)
   lib/drive.js               cliente de /api/archivos: subida directa a Google, plan B por trozos, descarga por trozos
   lib/imagen.js              reduce las fotos del celular (≤ 1600 px, JPEG) antes de subirlas
+  lib/requisitos.js          requisitos del hito: cargado, pendiente o «No corresponde»
   lib/visor.js               qué visor usa cada archivo, tope de píxeles por página y estado del visor abierto
   lib/lienzo.js              motor del visor: páginas con zoom, pellizco y dibujo perezoso
   lib/pdfRender.js           pdf.js (import() dinámico); fuentes y .wasm de pdf.js se sirven desde /pdfjs/ (vite.config.js)

@@ -12,7 +12,8 @@ export function TomarFoto({ onChange, disabled = false }) {
   );
 }
 
-export default function SubirArchivo({ etiqueta, ocupado = false, onChange, camara = true }) {
+// `children` se agrega al final de la fila (por ejemplo el botón «No corresponde» de un requisito).
+export default function SubirArchivo({ etiqueta, ocupado = false, onChange, camara = true, children }) {
   return (
     <div className="subir-fila">
       <label className={`btn mini subir-archivo${ocupado ? " deshabilitado" : ""}`}>
@@ -20,6 +21,7 @@ export default function SubirArchivo({ etiqueta, ocupado = false, onChange, cama
         <input type="file" hidden disabled={ocupado} onChange={onChange} />
       </label>
       {camara && <TomarFoto onChange={onChange} disabled={ocupado} />}
+      {children}
     </div>
   );
 }

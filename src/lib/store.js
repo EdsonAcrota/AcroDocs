@@ -24,6 +24,7 @@ import {
   AMBITOS,
 } from "./catalogo.js";
 import { eliminarArchivo } from "./archivos.js";
+import { faltantes } from "./requisitos.js";
 import { MODO_NUBE } from "./supabase.js";
 import * as nube from "./nube.js";
 import { calcularFlujo, instanciarPasos } from "./flujo.js";
@@ -1022,6 +1023,32 @@ export const eliminarDocumento = (itemId, docId) => {
   return true;
 };
 
+// Marca un requisito del hito como «No corresponde» (o vuelve a exigirlo): se da por cumplido y deja de
+// contar como pendiente. Exige el mismo permiso que marcar el estado del hito. Un requisito con archivos
+// no se puede marcar: primero hay que eliminarlos.
+export const marcarRequisitoNoCorresponde = (itemId, requisito, noCorresponde = true) => {
+  const data = read();
+  const item = data.items.find((i) => i.id === itemId);
+  if (!item) throw new Error("El hito no existe.");
+  exigirEn(data, "estado", item.tramite_id);
+  if (!(item.docsRequeridos || []).includes(requisito)) throw new Error("Ese documento no está en la lista de requisitos del hito.");
+  if (noCorresponde && (item.documentos || []).some((d) => d.tipoDoc === requisito)) {
+    throw new Error("Este requisito ya tiene archivos. Elimínalos antes de marcarlo como «No corresponde».");
+  }
+  const actuales = item.docsNoCorresponde || [];
+  if (actuales.includes(requisito) === Boolean(noCorresponde)) return clonar(item);
+  item.docsNoCorresponde = noCorresponde ? [...actuales, requisito] : actuales.filter((r) => r !== requisito);
+  anotarHistorial(data, {
+    accion: "editar",
+    objeto: "hito",
+    objetoId: item.id,
+    tramiteId: item.tramite_id,
+    detalle: `${item.codigo} — ${requisito}: ${noCorresponde ? "marcado como «No corresponde» (se da por cumplido)" : "vuelve a exigirse"}`,
+  });
+  write(data);
+  return clonar(item);
+};
+
 export const addTareaEventual = (tramiteId, clave, hitoId = null) => {
   const data = read();
   const tramite = data.tramites.find((t) => t.id === tramiteId);
@@ -1889,7 +1916,7 @@ export const resumenTramite = (tramiteId) => {
     const docs = t.documentos || [];
     docsRequeridos += reqs.length;
     docsCargados += docs.length;
-    requisitosPendientes += reqs.filter((r) => !docs.some((d) => d.tipoDoc === r)).length;
+    requisitosPendientes += faltantes(t).length;
   }
   return {
     total,
