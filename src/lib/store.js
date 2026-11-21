@@ -1526,7 +1526,11 @@ export const getProcedimiento = (id) => {
 export const crearProcedimiento = (datos = {}) => {
   const data = read();
   const tramiteId = datos.tramiteId || null;
-  exigirEn(data, "agregar", tramiteId || undefined);
+  // Iniciar un trámite es parte del seguimiento: lo puede hacer quien registra movimientos (residente,
+  // asistentes, finanzas, legal) o quien agrega hitos. La nube ya admite ambos permisos en `procedimientos`.
+  if (!puedeEn(data, "registrar", tramiteId || undefined) && !puedeEn(data, "agregar", tramiteId || undefined)) {
+    throw new Error("No tienes permiso para esta acción.");
+  }
   const contrato = data.tramites.find((t) => t.id === tramiteId);
   if (!contrato) throw new Error("El contrato no existe.");
   const hito = data.items.find((i) => i.id === datos.hitoId && i.tramite_id === tramiteId);

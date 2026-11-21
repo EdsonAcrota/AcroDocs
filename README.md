@@ -48,7 +48,7 @@ Los **asistentes** (técnico y administrativo) pueden subir documentos y registr
 
 En el detalle de cada hito, la información está en **cuadros que se contraen y se expanden** (estado y responsable, norma y plazos, seguimiento por pasos, trámites, documentos requeridos, otros documentos y, al final, el catálogo con sus botones de editar y actualizar). El navegador recuerda cómo dejaste cada cuadro. La tarjeta de alertas del Panel también se contrae.
 
-Los permisos son: ver todos los contratos, crear, editar y eliminar contratos, cambiar estado de hitos, agregar hitos y trámites, modificar plazos, eliminar hitos, subir, descargar, reemplazar y eliminar documentos, registrar y corregir movimientos, recibir alertas, editar el catálogo, configurar feriados, gestionar usuarios y descargar respaldos. Los de eliminar aparecen en rojo en la matriz.
+Los permisos son: ver todos los contratos, crear, editar y eliminar contratos, cambiar estado de hitos, agregar hitos, modificar plazos, eliminar hitos, subir, descargar, reemplazar y eliminar documentos, iniciar trámites y registrar movimientos y cargos, corregir movimientos, recibir alertas, editar el catálogo, configurar feriados, gestionar usuarios y descargar respaldos. Los de eliminar aparecen en rojo en la matriz.
 
 Cada eliminación, anulación, reemplazo y cambio de catálogo, permisos o usuarios queda en el **Historial** (del contrato y de Configuración), con quién y cuándo.
 

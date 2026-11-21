@@ -1885,3 +1885,20 @@ describe("requisitos que no corresponden", () => {
     expect(pendientes()).toBe(antes - 1);
   });
 });
+
+describe("iniciar trámites", () => {
+  it("quien registra movimientos (residente) puede iniciar un trámite en su contrato; solo consulta no", () => {
+    entrar("residente"); // solo ve t-001
+    const hito = store.listItems("t-001")[0];
+    const proc = store.crearProcedimiento({ tramiteId: "t-001", hitoId: hito.id, nombre: "Carta de inicio" });
+    expect(proc).toMatchObject({ tramiteId: "t-001", hitoId: hito.id, nombre: "Carta de inicio" });
+    expect(store.listProcedimientos("t-001")).toHaveLength(1);
+    // Y puede registrar su flujo: movimientos en el trámite.
+    store.agregarMovimientoProcedimiento(proc.id, { fecha: "2026-06-02", tipo: "Presentado", nota: "Entregado en mesa de partes" });
+    expect(store.getProcedimiento(proc.id).movimientos).toHaveLength(1);
+
+    store.logout();
+    entrar("consulta");
+    expect(() => store.crearProcedimiento({ tramiteId: "t-001", hitoId: hito.id })).toThrow("No tienes permiso");
+  });
+});

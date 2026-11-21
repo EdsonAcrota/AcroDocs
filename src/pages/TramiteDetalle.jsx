@@ -118,6 +118,8 @@ export default function TramiteDetalle() {
     ),
     [id]
   );
+  // Iniciar un trámite lo puede hacer quien registra movimientos (o quien agrega hitos).
+  const puedeIniciarTramite = Boolean(permiso.registrar || permiso.agregar);
   const [tramite, setTramite] = useState(getTramite(id));
   const [errorTramite, setErrorTramite] = useState("");
   const [items, setItems] = useState(listItems(id));
@@ -394,7 +396,7 @@ export default function TramiteDetalle() {
 
   const guardarProcedimiento = (e) => {
     e.preventDefault();
-    if (!permiso.agregar) return;
+    if (!puedeIniciarTramite) return;
     try {
       const creado = crearProcedimiento({ ...procForm, tramiteId: id });
       recargar();
@@ -1000,7 +1002,7 @@ export default function TramiteDetalle() {
           )}
           {permiso.descargar && <button className="btn" onClick={descargarExpediente}>Descargar expediente</button>}
           <button className="btn" onClick={() => window.print()}>Imprimir</button>
-          {permiso.agregar && (
+          {puedeIniciarTramite && (
             <button className="btn primario" onClick={() => abrirNuevoProcedimiento()}>+ Nuevo trámite</button>
           )}
           {permiso.eliminar && (
@@ -1178,7 +1180,7 @@ export default function TramiteDetalle() {
               <h3>Trámites del contrato</h3>
               <span className="ref">Procedimientos del contratista para cumplir un hito. Aquí se guardan movimientos, cargos y documentos internos.</span>
             </div>
-            {permiso.agregar && <button className="btn mini primario" onClick={() => abrirNuevoProcedimiento()}>+ Nuevo trámite</button>}
+            {puedeIniciarTramite && <button className="btn mini primario" onClick={() => abrirNuevoProcedimiento()}>+ Nuevo trámite</button>}
           </div>
           <div className="cuerpo">
             {procedimientos.length === 0 && <div className="vacio">Todavía no hay trámites. Crea uno para seguir un procedimiento hasta el documento objetivo de un hito.</div>}
@@ -1475,7 +1477,7 @@ export default function TramiteDetalle() {
                 recordar="hito-tramites"
               >
                 <p className="plegable-sub">Movimientos del flujo completo hasta el documento objetivo.</p>
-                {permiso.agregar && (
+                {puedeIniciarTramite && (
                   <div className="chips" style={{ marginBottom: 10 }}>
                     <button type="button" className="btn mini" onClick={() => abrirNuevoProcedimiento(tarea.id)}>+ Iniciar trámite</button>
                   </div>
